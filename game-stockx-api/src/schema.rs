@@ -1,32 +1,36 @@
-table! {
-    products (id) {
-      id -> Uuid,
-      name -> Text,
-      summary -> Text,
-      first_release_date -> Text,
-      cover -> Text,
+// @generated automatically by Diesel CLI.
+
+diesel::table! {
+    covers (id) {
+        id -> Uuid,
+        product_id -> Uuid,
+        image_url -> Text,
     }
 }
 
-table! {
+diesel::table! {
+    products (id) {
+        id -> Uuid,
+        name -> Text,
+        summary -> Text,
+        first_release_date -> Timestamp,
+    }
+}
+
+diesel::table! {
     sales (id) {
         id -> Uuid,
         created_at -> Timestamp,
-        sum -> Integer,
+        product_id -> Uuid,
+        total_price -> Numeric,
     }
 }
 
-table! {
-  covers (id) {
-    id -> Uuid,
-    url -> Text,
-  }
-}
+diesel::joinable!(covers -> products (product_id));
+diesel::joinable!(sales -> products (product_id));
 
-joinable!(sales -> products (id));
-joinable!(covers -> products (id));
-allow_tables_to_appear_in_same_query!(
+diesel::allow_tables_to_appear_in_same_query!(
+    covers,
     products,
     sales,
-    covers,
 );
