@@ -14,6 +14,7 @@ mod constants;
 mod product;
 mod response;
 mod sales;
+mod pagination;
 
 pub type DBPool = Pool<ConnectionManager<PgConnection>>;
 pub type DBPooledConnection = PooledConnection<ConnectionManager<PgConnection>>;

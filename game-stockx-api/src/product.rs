@@ -1,5 +1,5 @@
 use diesel::prelude::*;
-use actix_web::web::{Data, Json, Path};
+use actix_web::web::{self, Data, Json, Path};
 use actix_web::HttpResponse;
 use diesel::sql_types::{Integer, Numeric, Text, Nullable};
 use diesel::{sql_query, RunQueryDsl};
@@ -10,6 +10,7 @@ use bigdecimal::BigDecimal;
 use crate::constants::{APPLICATION_JSON, CONNECTION_POOL_ERROR};
 use crate::response::Response;
 use crate::{DBPool, DBPooledConnection};
+use crate::pagination::Pagination;
 
 pub type Products = Response<Product>;
 
@@ -19,13 +20,6 @@ pub struct Product {
     pub cover: String,
     pub first_release_date: String,
     pub name: String,
-}
-
-fn serialize_big_decimal<S>(value: &BigDecimal, serializer: S) -> Result<S::Ok, S::Error>
-where
-    S: Serializer,
-{
-    serializer.serialize_str(&value.to_string())
 }
 
 #[derive(Debug, Deserialize, Serialize, QueryableByName)]
@@ -48,8 +42,11 @@ pub struct ProductListItem {
 
 /// list 50 last products `/products`
 #[get("/products")]
-pub async fn list(pool: Data<DBPool>) -> HttpResponse {
+pub async fn list(pool: Data<DBPool>, query: web::Query<Pagination>) -> HttpResponse {
     let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
+
+    let limit = query.limit.unwrap_or(100);
+    let offset = query.offset.unwrap_or(0);
 
     let query = r#"
         SELECT 
@@ -61,10 +58,12 @@ pub async fn list(pool: Data<DBPool>) -> HttpResponse {
         FROM public.products AS prod
         LEFT JOIN covers AS cov ON prod.cover_id = cov.id
         ORDER BY prod.first_release_date DESC
-        LIMIT 100
+        LIMIT $1 OFFSET $2
     "#;
 
     let results = diesel::sql_query(query)
+        .bind::<diesel::sql_types::BigInt, _>(limit) // Привязываем параметр LIMIT
+        .bind::<diesel::sql_types::BigInt, _>(offset) // Привязываем параметр OFFSET
         .load::<ProductListItem>(conn);
 
     match results {
