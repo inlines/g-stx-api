@@ -6,7 +6,7 @@ use diesel::{sql_query, RunQueryDsl};
 use serde::{Deserialize, Serialize};
 use serde::ser::{Serializer};
 use bigdecimal::BigDecimal;
-
+use actix_web::http::header;
 use crate::constants::{APPLICATION_JSON, CONNECTION_POOL_ERROR};
 use crate::response::Response;
 use crate::{DBPool, DBPooledConnection};
@@ -70,6 +70,7 @@ pub async fn list(pool: Data<DBPool>, query: web::Query<Pagination>) -> HttpResp
         Ok(items) => {
             // Возвращаем полученные данные как JSON
             HttpResponse::Ok()
+                .insert_header((header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"))
                 .content_type(APPLICATION_JSON)
                 .json(items) // отправляем массив ProductListItem
         }
