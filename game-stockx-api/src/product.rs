@@ -1,11 +1,15 @@
-use actix_web::web::{Json, Path};
+use diesel::prelude::*;
+use actix_web::web::{Data, Json, Path};
 use actix_web::HttpResponse;
-use chrono::{DateTime, Utc};
+use diesel::sql_types::{Integer, Numeric, Text, Nullable};
+use diesel::{sql_query, RunQueryDsl};
 use serde::{Deserialize, Serialize};
-use uuid::Uuid;
+use serde::ser::{Serializer};
+use bigdecimal::BigDecimal;
 
-use crate::constants::APPLICATION_JSON;
+use crate::constants::{APPLICATION_JSON, CONNECTION_POOL_ERROR};
 use crate::response::Response;
+use crate::{DBPool, DBPooledConnection};
 
 pub type Products = Response<Product>;
 
@@ -17,30 +21,70 @@ pub struct Product {
     pub name: String,
 }
 
-/// list 50 last products `/products`
-#[get("/products")]
-pub async fn list() -> HttpResponse {
-    // TODO find the last 50 products and return them
-
-    let products = Products { results: vec![] };
-
-    HttpResponse::Ok()
-        .content_type(APPLICATION_JSON)
-        .json(products)
+fn serialize_big_decimal<S>(value: &BigDecimal, serializer: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    serializer.serialize_str(&value.to_string())
 }
 
-/// create a product `/products`
-// #[post("/products")]
-// pub async fn create(product_req: Json<ProductRequest>) -> HttpResponse {
-//     HttpResponse::Created()
-//         .content_type(APPLICATION_JSON)
-//         .json(product_req.to_product())
-// }
+#[derive(Debug, Deserialize, Serialize, QueryableByName)]
+pub struct ProductListItem {
+    #[diesel(sql_type = Integer)]
+    pub id: i32,
+
+    #[diesel(sql_type = Text)]
+    pub name: String,
+
+    #[diesel(sql_type = Text)]
+    pub summary: String,
+
+    #[diesel(sql_type = Nullable<Integer>)]
+    pub first_release_date: Option<i32>,
+
+    #[diesel(sql_type = Nullable<Text>)]
+    pub image_url: Option<String>,
+}
+
+/// list 50 last products `/products`
+#[get("/products")]
+pub async fn list(pool: Data<DBPool>) -> HttpResponse {
+    let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
+
+    let query = r#"
+        SELECT 
+            prod.id AS id,
+            prod.name AS name,
+            prod.summary AS summary,
+            prod.first_release_date AS first_release_date,
+            cov.image_url AS image_url
+        FROM public.products AS prod
+        LEFT JOIN covers AS cov ON prod.cover_id = cov.id
+        ORDER BY prod.first_release_date DESC
+        LIMIT 100
+    "#;
+
+    let results = diesel::sql_query(query)
+        .load::<ProductListItem>(conn);
+
+    match results {
+        Ok(items) => {
+            // Возвращаем полученные данные как JSON
+            HttpResponse::Ok()
+                .content_type(APPLICATION_JSON)
+                .json(items) // отправляем массив ProductListItem
+        }
+        Err(err) => {
+            // Логирование и возврат ошибки
+            eprintln!("Database error: {:?}", err);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
 
 /// find a product by its id `/products/{id}`
 #[get("/products/{id}")]
 pub async fn get(path: Path<(String,)>) -> HttpResponse {
-    // TODO find product a product by ID and return it
     let found_product: Option<Product> = None;
 
     match found_product {

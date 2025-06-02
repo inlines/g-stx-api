@@ -2,18 +2,18 @@
 
 diesel::table! {
     covers (id) {
-        id -> Uuid,
-        product_id -> Uuid,
+        id -> Int4,
         image_url -> Text,
     }
 }
 
 diesel::table! {
     products (id) {
-        id -> Uuid,
+        id -> Int4,
         name -> Text,
         summary -> Text,
-        first_release_date -> Timestamp,
+        first_release_date -> Nullable<Int4>,
+        cover_id -> Nullable<Int4>,
     }
 }
 
@@ -21,12 +21,11 @@ diesel::table! {
     sales (id) {
         id -> Uuid,
         created_at -> Timestamp,
-        product_id -> Uuid,
-        total_price -> Numeric,
+        product_id -> Int4,
+        total_price -> Int4,
     }
 }
 
-diesel::joinable!(covers -> products (product_id));
 diesel::joinable!(sales -> products (product_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
