@@ -95,8 +95,8 @@ pub struct ProductReleaseInfo {
     #[diesel(sql_type = Integer)]
     pub release_date: i32,
 
-    #[diesel(sql_type = Integer)]
-    pub release_region: i32,
+    #[diesel(sql_type = Text)]
+    pub release_region: String,
 
     #[diesel(sql_type = Text)]
     pub platform_name: String,
@@ -139,11 +139,12 @@ pub async fn get(pool: Data<DBPool>, path: Path<(i64,)>) -> HttpResponse {
                  let release_query = r#"
                     SELECT
                         r.release_date AS release_date,
-                        r.release_region AS release_region,
+                        reg.name AS release_region,
                         p.name AS platform_name,
                         p.generation AS platform_generation
                     FROM releases as r
                     LEFT JOIN platforms as p ON r.platform = p.id
+                    INNER JOIN regions as reg ON reg.id = r.release_region
                     where r.product_id = $1
                     ORDER BY r.release_date
                 "#;
