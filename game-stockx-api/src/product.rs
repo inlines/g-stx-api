@@ -38,6 +38,7 @@ pub async fn list(pool: Data<DBPool>, query: web::Query<Pagination>) -> HttpResp
 
     let limit = query.limit.unwrap_or(100);
     let offset = query.offset.unwrap_or(0);
+    let text_query = format!("%{}%", query.query.clone().unwrap_or_default());
 
     let query = r#"
         SELECT 
@@ -47,6 +48,7 @@ pub async fn list(pool: Data<DBPool>, query: web::Query<Pagination>) -> HttpResp
             cov.image_url AS image_url
         FROM public.products AS prod
         LEFT JOIN covers AS cov ON prod.cover_id = cov.id
+        WHERE prod.name ILIKE $3
         ORDER BY prod.first_release_date ASC
         LIMIT $1 OFFSET $2
     "#;
@@ -54,6 +56,7 @@ pub async fn list(pool: Data<DBPool>, query: web::Query<Pagination>) -> HttpResp
     let results = diesel::sql_query(query)
         .bind::<diesel::sql_types::BigInt, _>(limit) // Привязываем параметр LIMIT
         .bind::<diesel::sql_types::BigInt, _>(offset) // Привязываем параметр OFFSET
+        .bind::<diesel::sql_types::Text, _>(text_query)
         .load::<ProductListItem>(conn);
 
     match results {
