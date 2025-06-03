@@ -26,9 +26,6 @@ pub struct ProductListItem {
     #[diesel(sql_type = Text)]
     pub name: String,
 
-    #[diesel(sql_type = Text)]
-    pub summary: String,
-
     #[diesel(sql_type = Nullable<Integer>)]
     pub first_release_date: Option<i32>,
 
@@ -113,7 +110,7 @@ pub struct ProductResponse {
     pub product: ProductProperties,
     pub releases: Vec<ProductReleaseInfo>,
 }
-/// find a product by its id `/products/{id}`
+
 #[get("/products/{id}")]
 pub async fn get(pool: Data<DBPool>, path: Path<(i64,)>) -> HttpResponse {
     let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
@@ -146,7 +143,7 @@ pub async fn get(pool: Data<DBPool>, path: Path<(i64,)>) -> HttpResponse {
                         p.name AS platform_name,
                         p.generation AS platform_generation
                     FROM releases as r
-                    INNER JOIN platforms as p ON r.platform = p.id
+                    LEFT JOIN platforms as p ON r.platform = p.id
                     where r.product_id = $1
                 "#;
 
