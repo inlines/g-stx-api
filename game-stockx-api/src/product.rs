@@ -95,8 +95,8 @@ pub struct ProductProperties {
 
 #[derive(Debug, Serialize, QueryableByName)]
 pub struct ProductReleaseInfo {
-    #[diesel(sql_type = Integer)]
-    pub release_date: i32,
+    #[diesel(sql_type = Nullable<Integer>)]
+    pub release_date: Option<i32>,
 
     #[diesel(sql_type = Text)]
     pub release_region: String,
