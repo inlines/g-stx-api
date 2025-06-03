@@ -33,3 +33,8 @@ CREATE TABLE IF NOT EXISTS platforms (
     name TEXT NOT NULL,
     generation INTEGER
 );
+
+CREATE TABLE IF NOT EXISTS regions (
+    id INTEGER PRIMARY KEY NOT NULL,
+    name TEXT NOT NULL
+);

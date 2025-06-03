@@ -27,6 +27,13 @@ diesel::table! {
 }
 
 diesel::table! {
+    regions (id) {
+        id -> Int4,
+        name -> Text,
+    }
+}
+
+diesel::table! {
     releases (id) {
         id -> Int4,
         release_date -> Nullable<Int4>,
@@ -53,6 +60,7 @@ diesel::allow_tables_to_appear_in_same_query!(
     covers,
     platforms,
     products,
+    regions,
     releases,
     sales,
 );
