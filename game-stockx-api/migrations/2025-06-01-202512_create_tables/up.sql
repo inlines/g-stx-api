@@ -12,8 +12,24 @@ CREATE TABLE IF NOT EXISTS products (
 );
 
 CREATE TABLE IF NOT EXISTS sales (
-    id          UUID PRIMARY KEY        NOT NULL,
+    id          INTEGER PRIMARY KEY        NOT NULL,
     created_at  TIMESTAMP DEFAULT now() NOT NULL,
     product_id  INTEGER REFERENCES products(id) ON DELETE CASCADE NOT NULL,
     total_price INTEGER                 NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS releases (
+    id          INTEGER PRIMARY KEY      NOT NULL,
+    release_date INTEGER,
+    product_id  INTEGER REFERENCES products(id) ON DELETE CASCADE NOT NULL,
+    platform INTEGER NOT NULL,
+    release_status INTEGER,
+    release_region INTEGER
+);
+
+CREATE TABLE IF NOT EXISTS platforms (
+    id INTEGER PRIMARY KEY NOT NULL,
+    abbreviation TEXT,
+    name TEXT NOT NULL,
+    generation INTEGER
 );
