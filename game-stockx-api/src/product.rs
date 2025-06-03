@@ -145,6 +145,7 @@ pub async fn get(pool: Data<DBPool>, path: Path<(i64,)>) -> HttpResponse {
                     FROM releases as r
                     LEFT JOIN platforms as p ON r.platform = p.id
                     where r.product_id = $1
+                    ORDER BY r.release_date
                 "#;
 
                 let release_result = diesel::sql_query(release_query)
