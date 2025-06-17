@@ -5,7 +5,8 @@ extern crate diesel;
 
 use std::{env, io};
 use dotenv::dotenv;
-use actix_web::{middleware, App, HttpServer, web};
+use actix_cors::Cors;
+use actix_web::{middleware, App, HttpServer, web, http};
 use diesel::r2d2::ConnectionManager;
 use diesel::PgConnection;
 use r2d2::{Pool, PooledConnection};
@@ -16,6 +17,7 @@ mod response;
 mod sales;
 mod pagination;
 mod register;
+mod auth;
 
 pub type DBPool = Pool<ConnectionManager<PgConnection>>;
 pub type DBPooledConnection = PooledConnection<ConnectionManager<PgConnection>>;
@@ -40,12 +42,19 @@ async fn main() -> io::Result<()> {
         App::new()
             .app_data(web::Data::new(pool.clone()))
             .wrap(middleware::Logger::default()) // Логирование
+            .wrap(
+                Cors::default()
+                .allow_any_origin()
+                .allowed_methods(vec!["GET", "POST", "OPTIONS"])
+                .allowed_headers(vec![http::header::AUTHORIZATION, http::header::CONTENT_TYPE])
+                .max_age(3600)
+            )
             .service(product::list) // Роуты для работы с продуктами
             .service(product::get)
             .service(sales::list) // Роуты для работы с продажами
             .service(sales::add_sale)
             .service(register::register)
-            .service(register::register_options)
+            .service(auth::login)
     })
     .bind("0.0.0.0:9090")? // Привязываем сервер к адресу
     .run()

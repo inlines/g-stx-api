@@ -1,6 +1,6 @@
 use actix_web::{post, options, web, HttpResponse};
 use serde::Deserialize;
-use crate::constants::{APPLICATION_JSON, CONNECTION_POOL_ERROR};
+use crate::constants::{CONNECTION_POOL_ERROR};
 use crate::DBPool;
 use diesel::prelude::*;
 use actix_web::http::header;
