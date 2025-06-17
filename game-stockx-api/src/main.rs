@@ -15,6 +15,7 @@ mod product;
 mod response;
 mod sales;
 mod pagination;
+mod register;
 
 pub type DBPool = Pool<ConnectionManager<PgConnection>>;
 pub type DBPooledConnection = PooledConnection<ConnectionManager<PgConnection>>;
@@ -43,6 +44,8 @@ async fn main() -> io::Result<()> {
             .service(product::get)
             .service(sales::list) // Роуты для работы с продажами
             .service(sales::add_sale)
+            .service(register::register)
+            .service(register::register_options)
     })
     .bind("0.0.0.0:9090")? // Привязываем сервер к адресу
     .run()

@@ -38,3 +38,10 @@ CREATE TABLE IF NOT EXISTS regions (
     id INTEGER PRIMARY KEY NOT NULL,
     name TEXT NOT NULL
 );
+
+CREATE IF NOT EXISTS TABLE users (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    user_login TEXT UNIQUE NOT NULL,
+    password_hash TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT now()
+);
