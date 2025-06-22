@@ -108,10 +108,18 @@ pub struct ProductReleaseInfo {
     pub platform_generation: Option<i32>
 }
 
+#[derive(QueryableByName)]
+struct ScreenshotUrl {
+    #[sql_type = "diesel::sql_types::Text"]
+    image_url: String,
+}
+
+
 #[derive(Debug, Serialize)]
 pub struct ProductResponse {
     pub product: ProductProperties,
     pub releases: Vec<ProductReleaseInfo>,
+    pub screenshots: Vec<String>,
 }
 
 #[get("/products/{id}")]
@@ -139,6 +147,18 @@ pub async fn get(pool: Data<DBPool>, path: Path<(i64,)>) -> HttpResponse {
     match prod_result {
         Ok(mut items) => {
             if let Some(product) = items.pop() {
+
+                let screenshot_query = r#"
+                    SELECT image_url
+                    FROM screenshots
+                    WHERE game = $1
+                "#;
+
+                let screenshots_result = diesel::sql_query(screenshot_query)
+                    .bind::<diesel::sql_types::BigInt, _>(product_id)
+                    .load::<ScreenshotUrl>(&mut *conn);
+
+
                  let release_query = r#"
                     SELECT
                         r.release_date AS release_date,
@@ -156,22 +176,28 @@ pub async fn get(pool: Data<DBPool>, path: Path<(i64,)>) -> HttpResponse {
                     .bind::<diesel::sql_types::BigInt, _>(product_id)
                     .load::<ProductReleaseInfo>(conn);
 
-                match release_result {
-                    Ok(releases) => {
+                match (release_result, screenshots_result) {
+                    (Ok(releases), Ok(screenshot_urls)) => {
+                        let screenshots = screenshot_urls.into_iter().map(|s| s.image_url).collect();
                         let response = ProductResponse {
                             product,
                             releases,
+                            screenshots,
                         };
                         HttpResponse::Ok()
-                            .insert_header((header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"))
                             .content_type(APPLICATION_JSON)
                             .json(response)
                     }
-                    Err(err) => {
+                    (Err(err), _) => {
                         eprintln!("Release query error: {:?}", err);
                         HttpResponse::InternalServerError().finish()
                     }
+                    (_, Err(err)) => {
+                        eprintln!("Screenshot query error: {:?}", err);
+                        HttpResponse::InternalServerError().finish()
+                    }
                 }
+
             } else {
                 HttpResponse::NotFound().body("Product not found")
             }

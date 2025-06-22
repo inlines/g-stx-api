@@ -1,5 +1,5 @@
 use crate::constants::{CONNECTION_POOL_ERROR};
-use actix_web::{post, options, web, HttpResponse};
+use actix_web::{post, web, HttpResponse};
 use actix_web::http::header;
 use crate::DBPool;
 use jsonwebtoken::{encode, decode, Header, EncodingKey, DecodingKey, Validation};
@@ -56,15 +56,6 @@ struct LoginRequest {
     password: String,
 }
 
-#[options("/login")]
-pub async fn login_options() -> HttpResponse {
-    HttpResponse::Ok()
-        .insert_header((header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"))
-        .insert_header((header::ACCESS_CONTROL_ALLOW_METHODS, "POST, OPTIONS"))
-        .insert_header((header::ACCESS_CONTROL_ALLOW_HEADERS, "Content-Type"))
-        .finish()
-}
-
 #[post("/login")]
 async fn login(pool: web::Data<DBPool>, data: web::Json<LoginRequest>) -> HttpResponse {
     let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
@@ -85,15 +76,9 @@ async fn login(pool: web::Data<DBPool>, data: web::Json<LoginRequest>) -> HttpRe
             if verify_password(&data.password, &user.password_hash) {
                 let token = create_jwt(&user.user_login);
                 return HttpResponse::Ok()
-                  .insert_header((header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"))
-                  .insert_header((header::ACCESS_CONTROL_ALLOW_METHODS, "POST, OPTIONS"))
-                  .insert_header((header::ACCESS_CONTROL_ALLOW_HEADERS, "Content-Type"))
                   .json(serde_json::json!({ "token": token }));
             } else {
                 return HttpResponse::Unauthorized()
-                  .insert_header((header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"))
-                  .insert_header((header::ACCESS_CONTROL_ALLOW_METHODS, "POST, OPTIONS"))
-                  .insert_header((header::ACCESS_CONTROL_ALLOW_HEADERS, "Content-Type"))
                   .body("Invalid credentials");
             }
         }

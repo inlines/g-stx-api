@@ -1,9 +1,8 @@
-use actix_web::{post, options, web, HttpResponse};
+use actix_web::{post, web, HttpResponse};
 use serde::Deserialize;
 use crate::constants::{CONNECTION_POOL_ERROR};
 use crate::DBPool;
 use diesel::prelude::*;
-use actix_web::http::header;
 
 use argon2::{Argon2, PasswordHasher};
 use argon2::password_hash::{SaltString, rand_core::OsRng};
@@ -24,15 +23,6 @@ pub struct RegisterRequest {
     password: String,
 }
 
-#[options("/register")]
-pub async fn register_options() -> HttpResponse {
-    HttpResponse::Ok()
-        .insert_header((header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"))
-        .insert_header((header::ACCESS_CONTROL_ALLOW_METHODS, "POST, OPTIONS"))
-        .insert_header((header::ACCESS_CONTROL_ALLOW_HEADERS, "Content-Type"))
-        .finish()
-}
-
 #[post("/register")]
 pub async fn register(pool: web::Data<DBPool>, data: web::Json<RegisterRequest>) -> HttpResponse {
     let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
@@ -49,14 +39,8 @@ pub async fn register(pool: web::Data<DBPool>, data: web::Json<RegisterRequest>)
 
     match result {
         Ok(_) => HttpResponse::Created()
-            .insert_header((header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"))
-            .insert_header((header::ACCESS_CONTROL_ALLOW_METHODS, "POST, OPTIONS"))
-            .insert_header((header::ACCESS_CONTROL_ALLOW_HEADERS, "Content-Type"))
             .finish(),
         Err(_) => HttpResponse::Conflict()
-            .insert_header((header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"))
-            .insert_header((header::ACCESS_CONTROL_ALLOW_METHODS, "POST, OPTIONS"))
-            .insert_header((header::ACCESS_CONTROL_ALLOW_HEADERS, "Content-Type"))
             .body("User already exists"),
     }
 }
