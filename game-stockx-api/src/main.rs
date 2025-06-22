@@ -57,6 +57,7 @@ async fn main() -> io::Result<()> {
             .service(register::register)
             .service(auth::login)
             .service(collection::add_release)
+            .service(collection::remove_release)
             .service(collection::get_collection)
     })
     .bind("0.0.0.0:9090")? // Привязываем сервер к адресу
