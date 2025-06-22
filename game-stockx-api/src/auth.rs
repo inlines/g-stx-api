@@ -9,9 +9,9 @@ use argon2::{Argon2, PasswordVerifier};
 use argon2::password_hash::PasswordHash;
 
 #[derive(Serialize, Deserialize)]
-struct Claims {
-    sub: String,
-    exp: usize,
+pub struct Claims {
+    pub sub: String,
+    pub exp: usize,
 }
 
 #[derive(QueryableByName)]
@@ -37,7 +37,7 @@ fn create_jwt(email: &str) -> String {
     encode(&Header::default(), &claims, &EncodingKey::from_secret(b"my-secret")).unwrap()
 }
 
-fn verify_jwt(token: &str) -> Option<Claims> {
+pub fn verify_jwt(token: &str) -> Option<Claims> {
     decode::<Claims>(token, &DecodingKey::from_secret(b"my-secret"), &Validation::default())
         .map(|data| data.claims)
         .ok()

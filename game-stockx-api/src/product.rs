@@ -95,6 +95,9 @@ pub struct ProductProperties {
 
 #[derive(Debug, Serialize, QueryableByName)]
 pub struct ProductReleaseInfo {
+    #[diesel(sql_type = Integer)]
+    pub release_id: i32,
+
     #[diesel(sql_type = Nullable<Integer>)]
     pub release_date: Option<i32>,
 
@@ -162,6 +165,7 @@ pub async fn get(pool: Data<DBPool>, path: Path<(i64,)>) -> HttpResponse {
                  let release_query = r#"
                     SELECT
                         r.release_date AS release_date,
+                        r.id AS release_id,
                         reg.name AS release_region,
                         p.name AS platform_name,
                         p.generation AS platform_generation

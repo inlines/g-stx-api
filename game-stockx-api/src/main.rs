@@ -18,6 +18,7 @@ mod sales;
 mod pagination;
 mod register;
 mod auth;
+mod collection;
 
 pub type DBPool = Pool<ConnectionManager<PgConnection>>;
 pub type DBPooledConnection = PooledConnection<ConnectionManager<PgConnection>>;
@@ -55,6 +56,8 @@ async fn main() -> io::Result<()> {
             .service(sales::add_sale)
             .service(register::register)
             .service(auth::login)
+            .service(collection::add_release)
+            .service(collection::get_collection)
     })
     .bind("0.0.0.0:9090")? // Привязываем сервер к адресу
     .run()

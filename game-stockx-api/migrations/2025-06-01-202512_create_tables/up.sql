@@ -49,7 +49,8 @@ CREATE TABLE IF NOT EXISTS users (
 
 CREATE TABLE IF NOT EXISTS users_have_releases (
     release_id  INTEGER REFERENCES releases(id) ON DELETE CASCADE NOT NULL,
-    user_id  INTEGER REFERENCES users(id) ON DELETE CASCADE NOT NULL
+    user_login  TEXT REFERENCES users(user_login) ON DELETE CASCADE NOT NULL,
+    PRIMARY KEY (release_id, user_login)
 );
 
 CREATE TABLE IF NOT EXISTS screenshots (
