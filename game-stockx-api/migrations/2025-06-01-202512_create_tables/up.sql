@@ -58,3 +58,9 @@ CREATE TABLE IF NOT EXISTS screenshots (
     image_url   TEXT                    NOT NULL,
     game INTEGER REFERENCES products(id) ON DELETE CASCADE NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS product_platforms (
+    product_id  INTEGER REFERENCES products(id) ON DELETE CASCADE NOT NULL,
+    platform_id INTEGER REFERENCES platforms(id) ON DELETE CASCADE NOT NULL,
+    PRIMARY KEY (product_id, platform_id)
+);

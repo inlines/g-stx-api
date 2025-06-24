@@ -3,7 +3,7 @@ use crate::constants::{CONNECTION_POOL_ERROR};
 use crate::{DBPool};
 use crate::auth::{verify_jwt};
 use diesel::prelude::*;
-use diesel::sql_types::{BigInt, Text, Integer, Nullable};
+use diesel::sql_types::{Text, Integer, Nullable};
 use actix_web::http::header;
 use serde::{Deserialize, Serialize};
 
@@ -25,6 +25,9 @@ struct CollectionItem {
 
     #[sql_type = "diesel::sql_types::Text"]
     product_name: String,
+
+    #[diesel(sql_type = Integer)]
+    product_id: i32,
 
     #[sql_type = "diesel::sql_types::Nullable<diesel::sql_types::Text>"]
     image_url: Option<String>,
@@ -62,6 +65,7 @@ async fn get_collection(pool: web::Data<DBPool>, req: HttpRequest) -> HttpRespon
             uhr.release_id,
             r.release_date,
             p.name as platform_name,
+            prod.id as product_id,
             prod.name AS product_name,
             cover.image_url,
             reg.name AS region_name

@@ -7,3 +7,5 @@ DROP TABLE IF EXISTS platforms CASCADE;
 DROP TABLE IF EXISTS regions CASCADE;
 DROP TABLE IF EXISTS users;
 DROP TABLE IF EXISTS users_have_releases;
+DROP TABLE IF EXISTS screenshots;
+DROP TABLE IF EXISTS product_platforms;
