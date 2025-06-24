@@ -47,21 +47,7 @@ pub async fn list(pool: Data<DBPool>, query: web::Query<Pagination>) -> HttpResp
             prod.name AS name,
             prod.first_release_date AS first_release_date,
             cov.image_url AS image_url
-        FROM public.products AS prod
-        INNER JOIN product_platforms AS pp
-        LEFT JOIN covers AS cov ON prod.cover_id = cov.id
-        WHERE prod.name ILIKE $3 AND pp.platform_id = $4
-        ORDER BY prod.first_release_date ASC
-        LIMIT $1 OFFSET $2
-    "#;
-
-    let query = r#"
-        SELECT 
-            prod.id AS id,
-            prod.name AS name,
-            prod.first_release_date AS first_release_date,
-            cov.image_url AS image_url
-            from product_platforms AS pp
+            FROM product_platforms AS pp
             INNER JOIN products as prod ON pp.product_id = prod.id
             LEFT JOIN covers AS cov ON prod.cover_id = cov.id
         WHERE pp.platform_id = $4 AND prod.name ILIKE $3

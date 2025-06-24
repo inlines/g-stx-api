@@ -6,6 +6,7 @@ use diesel::prelude::*;
 use diesel::sql_types::{Text, Integer, Nullable};
 use actix_web::http::header;
 use serde::{Deserialize, Serialize};
+use crate::pagination::Pagination;
 
 #[derive(Deserialize)]
 struct TrackReleaseRequest {
@@ -37,7 +38,7 @@ struct CollectionItem {
 }
 
 #[get("/collection")]
-async fn get_collection(pool: web::Data<DBPool>, req: HttpRequest) -> HttpResponse {
+async fn get_collection(pool: web::Data<DBPool>, req: HttpRequest, query: web::Query<Pagination>) -> HttpResponse {
     // Извлечение токена из заголовка
     let token = match req.headers().get(header::AUTHORIZATION) {
         Some(header_value) => {
@@ -59,6 +60,7 @@ async fn get_collection(pool: web::Data<DBPool>, req: HttpRequest) -> HttpRespon
     let user_login = claims.sub;
 
     let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
+    let cat = query.cat;
 
     let query = r#"
         SELECT 
@@ -75,11 +77,13 @@ async fn get_collection(pool: web::Data<DBPool>, req: HttpRequest) -> HttpRespon
         INNER JOIN products AS prod ON r.product_id = prod.id
         INNER JOIN covers AS cover ON cover.id = prod.cover_id
         INNER JOIN regions as reg on reg.id = r.release_region 
-        WHERE uhr.user_login = $1
+        WHERE uhr.user_login = $1 AND p.id = $2
+        ORDER BY prod.name
     "#;
 
     let result = diesel::sql_query(query)
         .bind::<Text, _>(&user_login)
+        .bind::<diesel::sql_types::BigInt, _>(cat)
         .load::<CollectionItem>(&mut *conn);
 
     match result {
