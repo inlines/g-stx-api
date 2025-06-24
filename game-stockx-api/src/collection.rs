@@ -3,7 +3,7 @@ use crate::constants::{CONNECTION_POOL_ERROR};
 use crate::{DBPool};
 use crate::auth::{verify_jwt};
 use diesel::prelude::*;
-use diesel::sql_types::{Text, Integer, Nullable};
+use diesel::sql_types::{Text, Integer, Nullable, BigInt, Array};
 use actix_web::http::header;
 use serde::{Deserialize, Serialize};
 use crate::pagination::Pagination;
@@ -35,6 +35,70 @@ struct CollectionItem {
 
     #[sql_type = "diesel::sql_types::Nullable<diesel::sql_types::Text>"]
     region_name: Option<String>,
+}
+
+#[derive(Serialize, QueryableByName)]
+struct CollectionStats {
+    #[sql_type = "Integer"]
+    platform: i32,
+
+    #[sql_type = "BigInt"] // COUNT возвращает bigint
+    release_count: i64,
+
+    #[sql_type = "Array<Integer>"]
+    release_ids: Vec<i32>,
+}
+
+#[get("/collection-stats")]
+async fn get_collection_stats(pool: web::Data<DBPool>, req: HttpRequest) -> HttpResponse {
+  // Извлечение токена из заголовка
+    let token = match req.headers().get(header::AUTHORIZATION) {
+        Some(header_value) => {
+            let header_str = header_value.to_str().unwrap_or("");
+            if header_str.starts_with("Bearer ") {
+                Some(&header_str[7..])
+            } else {
+                None
+            }
+        }
+        None => None,
+    };
+
+    let claims = match token.and_then(|t| verify_jwt(t)) {
+        Some(c) => c,
+        None => return HttpResponse::Unauthorized().body("Invalid or missing token"),
+    };
+
+    let user_login = claims.sub;
+
+    let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
+
+    let query = r#"
+        SELECT 
+          r.platform,
+          COUNT(uhr.release_id) AS release_count,
+          ARRAY_AGG(uhr.release_id) AS release_ids
+        FROM 
+          users_have_releases AS uhr
+        JOIN 
+          releases AS r ON uhr.release_id = r.id
+        WHERE 
+          uhr.user_login = $1
+        GROUP BY 
+          r.platform;
+    "#;
+
+    let result = diesel::sql_query(query)
+        .bind::<Text, _>(&user_login)
+        .load::<CollectionStats>(&mut *conn);
+
+    match result {
+        Ok(items) => HttpResponse::Ok().json(items),
+        Err(err) => {
+          eprintln!("Query error: {:?}", err);
+          HttpResponse::InternalServerError().body(format!("DB error: {:?}", err))
+        }
+    }
 }
 
 #[get("/collection")]
