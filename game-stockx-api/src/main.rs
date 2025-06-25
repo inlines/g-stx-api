@@ -58,6 +58,8 @@ async fn main() -> io::Result<()> {
             .service(auth::login)
             .service(collection::add_release)
             .service(collection::remove_release)
+            .service(collection::add_wish)
+            .service(collection::remove_wish)
             .service(collection::get_collection)
             .service(collection::get_collection_stats)
     })

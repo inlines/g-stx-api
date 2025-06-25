@@ -254,3 +254,98 @@ async fn remove_release(
         }
     }
 }
+
+#[post("/add_wish")]
+async fn add_wish(
+    pool: web::Data<DBPool>,
+    req: HttpRequest,
+    data: web::Json<TrackReleaseRequest>,
+) -> HttpResponse {
+    // Проверка токена
+    let token = match req.headers().get(header::AUTHORIZATION) {
+        Some(header_value) => {
+            let header_str = header_value.to_str().unwrap_or("");
+            if header_str.starts_with("Bearer ") {
+                Some(&header_str[7..])
+            } else {
+                None
+            }
+        }
+        None => None,
+    };
+
+    let claims = match token.and_then(|t| verify_jwt(t)) {
+        Some(c) => c,
+        None => return HttpResponse::Unauthorized().body("Invalid or missing token"),
+    };
+
+    let user_login = claims.sub;
+
+    let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
+
+    let insert_query = r#"
+        INSERT INTO users_have_wishes (release_id, user_login)
+        VALUES ($1, $2)
+        ON CONFLICT DO NOTHING
+    "#;
+
+    let result = diesel::sql_query(insert_query)
+        .bind::<Integer, _>(data.release_id)
+        .bind::<Text, _>(&user_login)
+        .execute(&mut *conn);
+
+    match result {
+        Ok(_) => HttpResponse::Ok().body({}),
+        Err(err) => {
+            eprintln!("Insert error: {:?}", err);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+#[post("/remove_wish")]
+async fn remove_wish(
+    pool: web::Data<DBPool>,
+    req: HttpRequest,
+    data: web::Json<TrackReleaseRequest>,
+) -> HttpResponse {
+    // Проверка токена
+    let token = match req.headers().get(header::AUTHORIZATION) {
+        Some(header_value) => {
+            let header_str = header_value.to_str().unwrap_or("");
+            if header_str.starts_with("Bearer ") {
+                Some(&header_str[7..])
+            } else {
+                None
+            }
+        }
+        None => None,
+    };
+
+    let claims = match token.and_then(|t| verify_jwt(t)) {
+        Some(c) => c,
+        None => return HttpResponse::Unauthorized().body("Invalid or missing token"),
+    };
+
+    let user_login = claims.sub;
+
+    let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
+
+    let delete_query = r#"
+        DELETE FROM users_have_wishes
+        WHERE release_id = $1 AND user_login = $2
+    "#;
+
+    let result = diesel::sql_query(delete_query)
+        .bind::<Integer, _>(data.release_id)
+        .bind::<Text, _>(&user_login)
+        .execute(&mut *conn);
+
+    match result {
+        Ok(_) => HttpResponse::Ok().body({}),
+        Err(err) => {
+            eprintln!("Delete error: {:?}", err);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}

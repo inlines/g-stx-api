@@ -64,3 +64,9 @@ CREATE TABLE IF NOT EXISTS product_platforms (
     platform_id INTEGER REFERENCES platforms(id) ON DELETE CASCADE NOT NULL,
     PRIMARY KEY (product_id, platform_id)
 );
+
+CREATE TABLE IF NOT EXISTS users_have_wishes (
+    release_id  INTEGER REFERENCES releases(id) ON DELETE CASCADE NOT NULL,
+    user_login  TEXT REFERENCES users(user_login) ON DELETE CASCADE NOT NULL,
+    PRIMARY KEY (release_id, user_login)
+);
