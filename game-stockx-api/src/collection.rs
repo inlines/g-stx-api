@@ -37,17 +37,25 @@ struct CollectionItem {
     region_name: Option<String>,
 }
 
+
 #[derive(Serialize, QueryableByName)]
 struct CollectionStats {
-    #[sql_type = "Integer"]
+    #[sql_type = "diesel::sql_types::Integer"]
     platform: i32,
 
-    #[sql_type = "BigInt"] // COUNT возвращает bigint
-    release_count: i64,
+    #[sql_type = "diesel::sql_types::BigInt"]
+    have_count: i64,
 
-    #[sql_type = "Array<Integer>"]
-    release_ids: Vec<i32>,
+    #[sql_type = "diesel::sql_types::Array<diesel::sql_types::Integer>"]
+    have_ids: Vec<i32>,
+
+    #[sql_type = "diesel::sql_types::BigInt"]
+    wish_count: i64,
+
+    #[sql_type = "diesel::sql_types::Array<diesel::sql_types::Integer>"]
+    wish_ids: Vec<i32>,
 }
+
 
 #[get("/collection-stats")]
 async fn get_collection_stats(pool: web::Data<DBPool>, req: HttpRequest) -> HttpResponse {
@@ -74,18 +82,34 @@ async fn get_collection_stats(pool: web::Data<DBPool>, req: HttpRequest) -> Http
     let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
 
     let query = r#"
-        SELECT 
-          r.platform,
-          COUNT(uhr.release_id) AS release_count,
-          ARRAY_AGG(uhr.release_id) AS release_ids
-        FROM 
-          users_have_releases AS uhr
-        JOIN 
-          releases AS r ON uhr.release_id = r.id
-        WHERE 
-          uhr.user_login = $1
-        GROUP BY 
-          r.platform;
+        SELECT
+          COALESCE(h.platform, w.platform) AS platform,
+          COALESCE(h.release_count, 0) AS have_count,
+          COALESCE(h.release_ids, ARRAY[]::int[]) AS have_ids,
+          COALESCE(w.release_count, 0) AS wish_count,
+          COALESCE(w.release_ids, ARRAY[]::int[]) AS wish_ids
+        FROM
+          (
+            SELECT 
+              r.platform,
+              COUNT(uhr.release_id) AS release_count,
+              ARRAY_AGG(uhr.release_id) AS release_ids
+            FROM users_have_releases AS uhr
+            JOIN releases AS r ON uhr.release_id = r.id
+            WHERE uhr.user_login = 'segasanshiro'
+            GROUP BY r.platform
+          ) h
+        FULL OUTER JOIN (
+            SELECT 
+              r.platform,
+              COUNT(uhw.release_id) AS release_count,
+              ARRAY_AGG(uhw.release_id) AS release_ids
+            FROM users_have_wishes AS uhw
+            JOIN releases AS r ON uhw.release_id = r.id
+            WHERE uhw.user_login = 'segasanshiro'
+            GROUP BY r.platform
+          ) w
+        ON h.platform = w.platform;
     "#;
 
     let result = diesel::sql_query(query)
@@ -142,6 +166,64 @@ async fn get_collection(pool: web::Data<DBPool>, req: HttpRequest, query: web::Q
         INNER JOIN covers AS cover ON cover.id = prod.cover_id
         INNER JOIN regions as reg on reg.id = r.release_region 
         WHERE uhr.user_login = $1 AND p.id = $2
+        ORDER BY prod.name
+    "#;
+
+    let result = diesel::sql_query(query)
+        .bind::<Text, _>(&user_login)
+        .bind::<diesel::sql_types::BigInt, _>(cat)
+        .load::<CollectionItem>(&mut *conn);
+
+    match result {
+        Ok(items) => HttpResponse::Ok().json(items),
+        Err(err) => {
+            eprintln!("Query error: {:?}", err);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+#[get("/wishlist")]
+async fn get_wishlist(pool: web::Data<DBPool>, req: HttpRequest, query: web::Query<Pagination>) -> HttpResponse {
+    // Извлечение токена из заголовка
+    let token = match req.headers().get(header::AUTHORIZATION) {
+        Some(header_value) => {
+            let header_str = header_value.to_str().unwrap_or("");
+            if header_str.starts_with("Bearer ") {
+                Some(&header_str[7..])
+            } else {
+                None
+            }
+        }
+        None => None,
+    };
+
+    let claims = match token.and_then(|t| verify_jwt(t)) {
+        Some(c) => c,
+        None => return HttpResponse::Unauthorized().body("Invalid or missing token"),
+    };
+
+    let user_login = claims.sub;
+
+    let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
+    let cat = query.cat;
+
+    let query = r#"
+        SELECT 
+            uhw.release_id,
+            r.release_date,
+            p.name as platform_name,
+            prod.id as product_id,
+            prod.name AS product_name,
+            cover.image_url,
+            reg.name AS region_name
+        FROM public.users_have_wishes AS uhw
+        INNER JOIN releases AS r ON uhw.release_id = r.id
+        INNER JOIN platforms AS p ON r.platform = p.id
+        INNER JOIN products AS prod ON r.product_id = prod.id
+        INNER JOIN covers AS cover ON cover.id = prod.cover_id
+        INNER JOIN regions as reg on reg.id = r.release_region 
+        WHERE uhw.user_login = $1 AND p.id = $2
         ORDER BY prod.name
     "#;
 
