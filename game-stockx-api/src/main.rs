@@ -1,8 +1,5 @@
 #[macro_use]
 extern crate actix_web;
-#[macro_use]
-extern crate diesel;
-
 use std::{env, io};
 use dotenv::dotenv;
 use actix_cors::Cors;
@@ -14,7 +11,6 @@ use r2d2::{Pool, PooledConnection};
 mod constants;
 mod product;
 mod response;
-mod sales;
 mod pagination;
 mod register;
 mod auth;
@@ -50,10 +46,8 @@ async fn main() -> io::Result<()> {
                 .allowed_headers(vec![http::header::AUTHORIZATION, http::header::CONTENT_TYPE])
                 .max_age(3600)
             )
-            .service(product::list) // Роуты для работы с продуктами
+            .service(product::list)
             .service(product::get)
-            .service(sales::list) // Роуты для работы с продажами
-            .service(sales::add_sale)
             .service(register::register)
             .service(auth::login)
             .service(collection::add_release)

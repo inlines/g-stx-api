@@ -1,6 +1,5 @@
 use crate::constants::{CONNECTION_POOL_ERROR};
 use actix_web::{post, web, HttpResponse};
-use actix_web::http::header;
 use crate::DBPool;
 use jsonwebtoken::{encode, decode, Header, EncodingKey, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};

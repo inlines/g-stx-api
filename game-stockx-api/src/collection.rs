@@ -3,7 +3,7 @@ use crate::constants::{CONNECTION_POOL_ERROR};
 use crate::{DBPool};
 use crate::auth::{verify_jwt};
 use diesel::prelude::*;
-use diesel::sql_types::{Text, Integer, Nullable, BigInt, Array};
+use diesel::sql_types::{Text, Integer, Nullable, BigInt};
 use actix_web::http::header;
 use serde::{Deserialize, Serialize};
 use crate::pagination::Pagination;
