@@ -1,7 +1,7 @@
 use diesel::prelude::*;
 use actix_web::web::{self, Data, Path};
 use actix_web::HttpResponse;
-use diesel::sql_types::{Integer, Text, Nullable};
+use diesel::sql_types::{Integer, Text, Nullable, BigInt};
 use diesel::{RunQueryDsl};
 use serde::{Deserialize, Serialize};
 use actix_web::http::header;
@@ -32,6 +32,19 @@ pub struct ProductListItem {
     #[diesel(sql_type = Nullable<Text>)]
     pub image_url: Option<String>,
 }
+
+#[derive(QueryableByName)]
+pub struct CountResult {
+    #[diesel(sql_type = BigInt)]
+    pub total: i64,
+}
+
+#[derive(Serialize)]
+pub struct ProductListResponse {
+    items: Vec<ProductListItem>,
+    total_count: i64,
+}
+
 #[get("/products")]
 pub async fn list(pool: Data<DBPool>, query: web::Query<Pagination>) -> HttpResponse {
     let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
@@ -58,20 +71,36 @@ pub async fn list(pool: Data<DBPool>, query: web::Query<Pagination>) -> HttpResp
     let results = diesel::sql_query(query)
         .bind::<diesel::sql_types::BigInt, _>(limit) // Привязываем параметр LIMIT
         .bind::<diesel::sql_types::BigInt, _>(offset) // Привязываем параметр OFFSET
-        .bind::<diesel::sql_types::Text, _>(text_query)
+        .bind::<diesel::sql_types::Text, _>(text_query.clone())
         .bind::<diesel::sql_types::BigInt, _>(cat)
         .load::<ProductListItem>(conn);
 
-    match results {
-        Ok(items) => {
+    let count_query = r#"
+        SELECT COUNT(*) as total
+        FROM product_platforms AS pp
+        INNER JOIN products as prod ON pp.product_id = prod.id
+        WHERE pp.platform_id = $1 AND prod.name ILIKE $2
+    "#;
+
+    let count_result = diesel::sql_query(count_query)
+        .bind::<diesel::sql_types::BigInt, _>(cat)
+        .bind::<diesel::sql_types::Text, _>(text_query.clone())
+        .load::<CountResult>(conn);
+
+
+    match (results, count_result) {
+        (Ok(items), Ok(count)) => {
+            let response = ProductListResponse {
+                items,
+                total_count: count.get(0).map(|c| c.total).unwrap_or(0),
+            };
             // Возвращаем полученные данные как JSON
             HttpResponse::Ok()
                 .insert_header((header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"))
                 .content_type(APPLICATION_JSON)
-                .json(items) // отправляем массив ProductListItem
+                .json(response) // отправляем массив ProductListItem
         }
-        Err(err) => {
-            // Логирование и возврат ошибки
+        (Err(err), _) | (_, Err(err)) => {
             eprintln!("Database error: {:?}", err);
             HttpResponse::InternalServerError().finish()
         }
