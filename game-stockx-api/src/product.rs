@@ -137,7 +137,10 @@ pub struct ProductReleaseInfo {
     pub platform_name: String,
 
     #[diesel(sql_type = Nullable<Integer>)]
-    pub platform_generation: Option<i32>
+    pub platform_generation: Option<i32>,
+
+    #[diesel(sql_type = Nullable<Integer>)]
+    pub release_status: Option<i32>,
 }
 
 #[derive(QueryableByName)]
@@ -195,6 +198,7 @@ pub async fn get(pool: Data<DBPool>, path: Path<(i64,)>) -> HttpResponse {
                     SELECT
                         r.release_date AS release_date,
                         r.id AS release_id,
+                        r.release_status AS release_status,
                         reg.name AS release_region,
                         p.name AS platform_name,
                         p.generation AS platform_generation
