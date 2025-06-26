@@ -4,8 +4,7 @@ use actix_web::HttpResponse;
 use diesel::sql_types::{Integer, Text, Nullable, BigInt};
 use diesel::{RunQueryDsl};
 use serde::{Deserialize, Serialize};
-use actix_web::http::header;
-use crate::constants::{APPLICATION_JSON, CONNECTION_POOL_ERROR};
+use crate::constants::{ CONNECTION_POOL_ERROR};
 use crate::{DBPool};
 use crate::pagination::Pagination;
 
@@ -96,8 +95,6 @@ pub async fn list(pool: Data<DBPool>, query: web::Query<Pagination>) -> HttpResp
             };
             // Возвращаем полученные данные как JSON
             HttpResponse::Ok()
-                .insert_header((header::ACCESS_CONTROL_ALLOW_ORIGIN, "*"))
-                .content_type(APPLICATION_JSON)
                 .json(response) // отправляем массив ProductListItem
         }
         (Err(err), _) | (_, Err(err)) => {
@@ -221,7 +218,6 @@ pub async fn get(pool: Data<DBPool>, path: Path<(i64,)>) -> HttpResponse {
                             screenshots,
                         };
                         HttpResponse::Ok()
-                            .content_type(APPLICATION_JSON)
                             .json(response)
                     }
                     (Err(err), _) => {

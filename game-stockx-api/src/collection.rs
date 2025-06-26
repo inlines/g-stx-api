@@ -37,6 +37,18 @@ struct CollectionItem {
     region_name: Option<String>,
 }
 
+#[derive(Serialize)]
+pub struct CollectionResponse {
+    items: Vec<CollectionItem>,
+    total_count: i64,
+}
+
+#[derive(QueryableByName)]
+pub struct CountResult {
+    #[diesel(sql_type = BigInt)]
+    pub total: i64,
+}
+
 
 #[derive(Serialize, QueryableByName)]
 struct CollectionStats {
@@ -149,6 +161,8 @@ async fn get_collection(pool: web::Data<DBPool>, req: HttpRequest, query: web::Q
 
     let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
     let cat = query.cat;
+    let limit = query.limit.unwrap_or(100);
+    let offset = query.offset.unwrap_or(0);
 
     let query = r#"
         SELECT 
@@ -167,16 +181,38 @@ async fn get_collection(pool: web::Data<DBPool>, req: HttpRequest, query: web::Q
         INNER JOIN regions as reg on reg.id = r.release_region 
         WHERE uhr.user_login = $1 AND p.id = $2
         ORDER BY prod.name
+        LIMIT $3 OFFSET $4
     "#;
 
     let result = diesel::sql_query(query)
         .bind::<Text, _>(&user_login)
         .bind::<diesel::sql_types::BigInt, _>(cat)
+        .bind::<diesel::sql_types::BigInt, _>(limit)
+        .bind::<diesel::sql_types::BigInt, _>(offset)
         .load::<CollectionItem>(&mut *conn);
 
-    match result {
-        Ok(items) => HttpResponse::Ok().json(items),
-        Err(err) => {
+    let count_query = r#"
+        SELECT COUNT(*) as total FROM public.users_have_releases AS uhr
+        INNER JOIN releases AS r ON uhr.release_id = r.id
+        INNER JOIN platforms AS p ON r.platform = p.id
+        WHERE uhr.user_login = $1 AND p.id = $2
+    "#;
+
+    let count_result = diesel::sql_query(count_query)
+        .bind::<Text, _>(&user_login)
+        .bind::<diesel::sql_types::BigInt, _>(cat)
+        .load::<CountResult>(conn);
+
+    match (result, count_result) {
+        (Ok(items), Ok(count)) => {
+            let response = CollectionResponse {
+                items,
+                total_count: count.get(0).map(|c| c.total).unwrap_or(0),
+            };
+            HttpResponse::Ok()
+                .json(response) // отправляем массив ProductListItem
+        }
+        (Err(err), _) | (_, Err(err)) => {
             eprintln!("Query error: {:?}", err);
             HttpResponse::InternalServerError().finish()
         }
@@ -207,6 +243,8 @@ async fn get_wishlist(pool: web::Data<DBPool>, req: HttpRequest, query: web::Que
 
     let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
     let cat = query.cat;
+    let limit = query.limit.unwrap_or(100);
+    let offset = query.offset.unwrap_or(0);
 
     let query = r#"
         SELECT 
@@ -225,16 +263,38 @@ async fn get_wishlist(pool: web::Data<DBPool>, req: HttpRequest, query: web::Que
         INNER JOIN regions as reg on reg.id = r.release_region 
         WHERE uhw.user_login = $1 AND p.id = $2
         ORDER BY prod.name
+        LIMIT $3 OFFSET $4
     "#;
 
     let result = diesel::sql_query(query)
         .bind::<Text, _>(&user_login)
         .bind::<diesel::sql_types::BigInt, _>(cat)
+        .bind::<diesel::sql_types::BigInt, _>(limit)
+        .bind::<diesel::sql_types::BigInt, _>(offset)
         .load::<CollectionItem>(&mut *conn);
 
-    match result {
-        Ok(items) => HttpResponse::Ok().json(items),
-        Err(err) => {
+    let count_query = r#"
+        SELECT COUNT(*) as total FROM public.users_have_wishes AS uhw
+        INNER JOIN releases AS r ON uhw.release_id = r.id
+        INNER JOIN platforms AS p ON r.platform = p.id
+        WHERE uhw.user_login = $1 AND p.id = $2
+    "#;
+
+    let count_result = diesel::sql_query(count_query)
+        .bind::<Text, _>(&user_login)
+        .bind::<diesel::sql_types::BigInt, _>(cat)
+        .load::<CountResult>(conn);
+
+    match (result, count_result) {
+        (Ok(items), Ok(count)) => {
+            let response = CollectionResponse {
+                items,
+                total_count: count.get(0).map(|c| c.total).unwrap_or(0),
+            };
+            HttpResponse::Ok()
+                .json(response) // отправляем массив ProductListItem
+        }
+        (Err(err), _) | (_, Err(err)) => {
             eprintln!("Query error: {:?}", err);
             HttpResponse::InternalServerError().finish()
         }
