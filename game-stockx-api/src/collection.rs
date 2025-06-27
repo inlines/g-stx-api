@@ -108,7 +108,7 @@ async fn get_collection_stats(pool: web::Data<DBPool>, req: HttpRequest) -> Http
               ARRAY_AGG(uhr.release_id) AS release_ids
             FROM users_have_releases AS uhr
             JOIN releases AS r ON uhr.release_id = r.id
-            WHERE uhr.user_login = 'segasanshiro'
+            WHERE uhr.user_login = $1
             GROUP BY r.platform
           ) h
         FULL OUTER JOIN (
@@ -118,7 +118,7 @@ async fn get_collection_stats(pool: web::Data<DBPool>, req: HttpRequest) -> Http
               ARRAY_AGG(uhw.release_id) AS release_ids
             FROM users_have_wishes AS uhw
             JOIN releases AS r ON uhw.release_id = r.id
-            WHERE uhw.user_login = 'segasanshiro'
+            WHERE uhw.user_login = $1
             GROUP BY r.platform
           ) w
         ON h.platform = w.platform;
