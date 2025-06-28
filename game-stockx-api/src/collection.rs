@@ -66,6 +66,12 @@ struct CollectionStats {
 
     #[sql_type = "diesel::sql_types::Array<diesel::sql_types::Integer>"]
     wish_ids: Vec<i32>,
+
+    #[sql_type = "diesel::sql_types::BigInt"]
+    bid_count: i64,
+
+    #[sql_type = "diesel::sql_types::Array<diesel::sql_types::Integer>"]
+    bid_ids: Vec<i32>,
 }
 
 
@@ -95,33 +101,50 @@ async fn get_collection_stats(pool: web::Data<DBPool>, req: HttpRequest) -> Http
 
     let query = r#"
         SELECT
-          COALESCE(h.platform, w.platform) AS platform,
-          COALESCE(h.release_count, 0) AS have_count,
-          COALESCE(h.release_ids, ARRAY[]::int[]) AS have_ids,
-          COALESCE(w.release_count, 0) AS wish_count,
-          COALESCE(w.release_ids, ARRAY[]::int[]) AS wish_ids
+        COALESCE(h.platform, w.platform, b.platform) AS platform,
+
+        COALESCE(h.release_count, 0) AS have_count,
+        COALESCE(h.release_ids, ARRAY[]::int[]) AS have_ids,
+
+        COALESCE(w.release_count, 0) AS wish_count,
+        COALESCE(w.release_ids, ARRAY[]::int[]) AS wish_ids,
+
+        COALESCE(b.release_count, 0) AS bid_count,
+        COALESCE(b.release_ids, ARRAY[]::int[]) AS bid_ids
+
         FROM
-          (
+        (
             SELECT 
-              r.platform,
-              COUNT(uhr.release_id) AS release_count,
-              ARRAY_AGG(uhr.release_id) AS release_ids
+            r.platform,
+            COUNT(uhr.release_id) AS release_count,
+            ARRAY_AGG(uhr.release_id) AS release_ids
             FROM users_have_releases AS uhr
             JOIN releases AS r ON uhr.release_id = r.id
             WHERE uhr.user_login = $1
             GROUP BY r.platform
-          ) h
+        ) h
+
         FULL OUTER JOIN (
             SELECT 
-              r.platform,
-              COUNT(uhw.release_id) AS release_count,
-              ARRAY_AGG(uhw.release_id) AS release_ids
+            r.platform,
+            COUNT(uhw.release_id) AS release_count,
+            ARRAY_AGG(uhw.release_id) AS release_ids
             FROM users_have_wishes AS uhw
             JOIN releases AS r ON uhw.release_id = r.id
             WHERE uhw.user_login = $1
             GROUP BY r.platform
-          ) w
-        ON h.platform = w.platform;
+        ) w ON h.platform = w.platform
+
+        FULL OUTER JOIN (
+            SELECT 
+            r.platform,
+            COUNT(uhb.release_id) AS release_count,
+            ARRAY_AGG(uhb.release_id) AS release_ids
+            FROM users_have_bids AS uhb
+            JOIN releases AS r ON uhb.release_id = r.id
+            WHERE uhb.user_login = $1
+            GROUP BY r.platform
+        ) b ON COALESCE(h.platform, w.platform) = b.platform;
     "#;
 
     let result = diesel::sql_query(query)
@@ -475,6 +498,101 @@ async fn remove_wish(
 
     let delete_query = r#"
         DELETE FROM users_have_wishes
+        WHERE release_id = $1 AND user_login = $2
+    "#;
+
+    let result = diesel::sql_query(delete_query)
+        .bind::<Integer, _>(data.release_id)
+        .bind::<Text, _>(&user_login)
+        .execute(&mut *conn);
+
+    match result {
+        Ok(_) => HttpResponse::Ok().body({}),
+        Err(err) => {
+            eprintln!("Delete error: {:?}", err);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+#[post("/add_bid")]
+async fn add_bid(
+    pool: web::Data<DBPool>,
+    req: HttpRequest,
+    data: web::Json<TrackReleaseRequest>,
+) -> HttpResponse {
+    // Проверка токена
+    let token = match req.headers().get(header::AUTHORIZATION) {
+        Some(header_value) => {
+            let header_str = header_value.to_str().unwrap_or("");
+            if header_str.starts_with("Bearer ") {
+                Some(&header_str[7..])
+            } else {
+                None
+            }
+        }
+        None => None,
+    };
+
+    let claims = match token.and_then(|t| verify_jwt(t)) {
+        Some(c) => c,
+        None => return HttpResponse::Unauthorized().body("Invalid or missing token"),
+    };
+
+    let user_login = claims.sub;
+
+    let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
+
+    let insert_query = r#"
+        INSERT INTO users_have_bids (release_id, user_login)
+        VALUES ($1, $2)
+        ON CONFLICT DO NOTHING
+    "#;
+
+    let result = diesel::sql_query(insert_query)
+        .bind::<Integer, _>(data.release_id)
+        .bind::<Text, _>(&user_login)
+        .execute(&mut *conn);
+
+    match result {
+        Ok(_) => HttpResponse::Ok().body({}),
+        Err(err) => {
+            eprintln!("Insert error: {:?}", err);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+#[post("/remove_bid")]
+async fn remove_bid(
+    pool: web::Data<DBPool>,
+    req: HttpRequest,
+    data: web::Json<TrackReleaseRequest>,
+) -> HttpResponse {
+    // Проверка токена
+    let token = match req.headers().get(header::AUTHORIZATION) {
+        Some(header_value) => {
+            let header_str = header_value.to_str().unwrap_or("");
+            if header_str.starts_with("Bearer ") {
+                Some(&header_str[7..])
+            } else {
+                None
+            }
+        }
+        None => None,
+    };
+
+    let claims = match token.and_then(|t| verify_jwt(t)) {
+        Some(c) => c,
+        None => return HttpResponse::Unauthorized().body("Invalid or missing token"),
+    };
+
+    let user_login = claims.sub;
+
+    let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
+
+    let delete_query = r#"
+        DELETE FROM users_have_bids
         WHERE release_id = $1 AND user_login = $2
     "#;
 

@@ -11,13 +11,6 @@ CREATE TABLE IF NOT EXISTS products (
     cover_id    INTEGER 
 );
 
-CREATE TABLE IF NOT EXISTS sales (
-    id          INTEGER PRIMARY KEY        NOT NULL,
-    created_at  TIMESTAMP DEFAULT now() NOT NULL,
-    product_id  INTEGER REFERENCES products(id) ON DELETE CASCADE NOT NULL,
-    total_price INTEGER                 NOT NULL
-);
-
 CREATE TABLE IF NOT EXISTS releases (
     id          INTEGER PRIMARY KEY      NOT NULL,
     release_date INTEGER,
@@ -66,6 +59,12 @@ CREATE TABLE IF NOT EXISTS product_platforms (
 );
 
 CREATE TABLE IF NOT EXISTS users_have_wishes (
+    release_id  INTEGER REFERENCES releases(id) ON DELETE CASCADE NOT NULL,
+    user_login  TEXT REFERENCES users(user_login) ON DELETE CASCADE NOT NULL,
+    PRIMARY KEY (release_id, user_login)
+);
+
+CREATE TABLE IF NOT EXISTS users_have_bids (
     release_id  INTEGER REFERENCES releases(id) ON DELETE CASCADE NOT NULL,
     user_login  TEXT REFERENCES users(user_login) ON DELETE CASCADE NOT NULL,
     PRIMARY KEY (release_id, user_login)

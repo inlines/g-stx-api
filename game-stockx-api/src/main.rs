@@ -57,6 +57,8 @@ async fn main() -> io::Result<()> {
             .service(collection::get_collection)
             .service(collection::get_wishlist)
             .service(collection::get_collection_stats)
+            .service(collection::add_bid)
+            .service(collection::remove_bid)
     })
     .bind("127.0.0.1:9090")? // Привязываем сервер к адресу
     .run()

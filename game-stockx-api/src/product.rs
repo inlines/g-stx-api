@@ -1,13 +1,14 @@
 use diesel::prelude::*;
 use actix_web::web::{self, Data, Path};
-use actix_web::HttpResponse;
+use actix_web::{HttpRequest, HttpResponse};
 use diesel::sql_types::{Integer, Text, Nullable, BigInt};
 use diesel::{RunQueryDsl};
 use serde::{Deserialize, Serialize};
 use crate::constants::{ CONNECTION_POOL_ERROR};
 use crate::{DBPool};
 use crate::pagination::Pagination;
-
+use actix_web::http::header;
+use crate::auth::{verify_jwt};
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Product {
@@ -141,6 +142,9 @@ pub struct ProductReleaseInfo {
 
     #[diesel(sql_type = Nullable<Integer>)]
     pub release_status: Option<i32>,
+
+    #[sql_type = "diesel::sql_types::Array<diesel::sql_types::Text>"]
+    bid_user_logins: Vec<String>,
 }
 
 #[derive(QueryableByName)]
@@ -158,10 +162,24 @@ pub struct ProductResponse {
 }
 
 #[get("/products/{id}")]
-pub async fn get(pool: Data<DBPool>, path: Path<(i64,)>) -> HttpResponse {
+pub async fn get(pool: Data<DBPool>, path: Path<(i64,)>, req: HttpRequest) -> HttpResponse {
     let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
-
     let (product_id,) = path.into_inner();
+
+    // Извлекаем токен и логин пользователя, если он есть
+    let token = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|header_value| header_value.to_str().ok())
+        .and_then(|header_str| {
+            if header_str.starts_with("Bearer ") {
+                Some(&header_str[7..])
+            } else {
+                None
+            }
+        });
+
+    let user_login_opt = token.and_then(|t| verify_jwt(t)).map(|claims| claims.sub);
 
     let prod_query = r#"
         SELECT 
@@ -182,7 +200,6 @@ pub async fn get(pool: Data<DBPool>, path: Path<(i64,)>) -> HttpResponse {
     match prod_result {
         Ok(mut items) => {
             if let Some(product) = items.pop() {
-
                 let screenshot_query = r#"
                     SELECT image_url
                     FROM screenshots
@@ -193,20 +210,24 @@ pub async fn get(pool: Data<DBPool>, path: Path<(i64,)>) -> HttpResponse {
                     .bind::<diesel::sql_types::BigInt, _>(product_id)
                     .load::<ScreenshotUrl>(&mut *conn);
 
-
-                 let release_query = r#"
+                let release_query = r#"
                     SELECT
                         r.release_date AS release_date,
                         r.id AS release_id,
                         r.release_status AS release_status,
                         reg.name AS release_region,
                         p.name AS platform_name,
-                        p.generation AS platform_generation
-                    FROM releases as r
-                    LEFT JOIN platforms as p ON r.platform = p.id
-                    INNER JOIN regions as reg ON reg.id = r.release_region
-                    where r.product_id = $1
-                    ORDER BY r.release_date
+                        p.generation AS platform_generation,
+                        COALESCE(ARRAY_AGG(uhb.user_login) FILTER (WHERE uhb.user_login IS NOT NULL), ARRAY[]::text[]) AS bid_user_logins
+                    FROM releases AS r
+                    LEFT JOIN platforms AS p ON r.platform = p.id
+                    INNER JOIN regions AS reg ON reg.id = r.release_region
+                    LEFT JOIN users_have_bids AS uhb ON uhb.release_id = r.id
+                    WHERE r.product_id = $1
+                    GROUP BY
+                        r.id, r.release_date, r.release_status,
+                        reg.name, p.name, p.generation
+                    ORDER BY r.release_date;
                 "#;
 
                 let release_result = diesel::sql_query(release_query)
@@ -214,15 +235,31 @@ pub async fn get(pool: Data<DBPool>, path: Path<(i64,)>) -> HttpResponse {
                     .load::<ProductReleaseInfo>(conn);
 
                 match (release_result, screenshots_result) {
-                    (Ok(releases), Ok(screenshot_urls)) => {
+                    (Ok(mut releases), Ok(screenshot_urls)) => {
+                        // Фильтрация bid_user_logins
+                        match &user_login_opt {
+                            Some(user_login) => {
+                                for release in &mut releases {
+                                    release
+                                        .bid_user_logins
+                                        .retain(|login| login != user_login);
+                                }
+                            }
+                            None => {
+                                for release in &mut releases {
+                                    release.bid_user_logins.clear();
+                                }
+                            }
+                        }
+
                         let screenshots = screenshot_urls.into_iter().map(|s| s.image_url).collect();
+
                         let response = ProductResponse {
                             product,
                             releases,
                             screenshots,
                         };
-                        HttpResponse::Ok()
-                            .json(response)
+                        HttpResponse::Ok().json(response)
                     }
                     (Err(err), _) => {
                         eprintln!("Release query error: {:?}", err);
@@ -233,7 +270,6 @@ pub async fn get(pool: Data<DBPool>, path: Path<(i64,)>) -> HttpResponse {
                         HttpResponse::InternalServerError().finish()
                     }
                 }
-
             } else {
                 HttpResponse::NotFound().body("Product not found")
             }
@@ -243,5 +279,4 @@ pub async fn get(pool: Data<DBPool>, path: Path<(i64,)>) -> HttpResponse {
             HttpResponse::InternalServerError().finish()
         }
     }
-
 }
