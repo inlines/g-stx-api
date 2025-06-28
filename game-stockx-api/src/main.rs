@@ -15,30 +15,26 @@ mod pagination;
 mod register;
 mod auth;
 mod collection;
+mod platforms;
 
 pub type DBPool = Pool<ConnectionManager<PgConnection>>;
 pub type DBPooledConnection = PooledConnection<ConnectionManager<PgConnection>>;
 
-#[actix_web::main] // Убедись, что используешь `#[actix_web::main]` для асинхронного основного потока
+#[actix_web::main]
 async fn main() -> io::Result<()> {
-    // Загружаем переменные окружения из файла .env
     dotenv().ok();
-
-    // Устанавливаем уровень логирования, можно также читать из переменной окружения
     env_logger::init_from_env(env_logger::Env::default().default_filter_or("actix_web=debug,actix_server=info"));
 
-    // Настройка пула для подключения к базе данных
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
     let manager = ConnectionManager::<PgConnection>::new(database_url);
     let pool = Pool::builder()
         .build(manager)
         .expect("Failed to create pool");
 
-    // Запуск HTTP сервера
     HttpServer::new(move || {
         App::new()
             .app_data(web::Data::new(pool.clone()))
-            .wrap(middleware::Logger::default()) // Логирование
+            .wrap(middleware::Logger::default())
             .wrap(
                 Cors::default()
                 .allow_any_origin()
@@ -59,8 +55,9 @@ async fn main() -> io::Result<()> {
             .service(collection::get_collection_stats)
             .service(collection::add_bid)
             .service(collection::remove_bid)
+            .service(platforms::get_platforms)
     })
-    .bind("127.0.0.1:9090")? // Привязываем сервер к адресу
+    .bind("127.0.0.1:9090")?
     .run()
     .await
 }

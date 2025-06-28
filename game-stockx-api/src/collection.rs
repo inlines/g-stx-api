@@ -21,19 +21,19 @@ struct CollectionItem {
     #[diesel(sql_type = Nullable<Integer>)]
     release_date: Option<i32>,
 
-    #[sql_type = "diesel::sql_types::Text"]
+    #[diesel(sql_type = Text)]
     platform_name: String,
 
-    #[sql_type = "diesel::sql_types::Text"]
+    #[diesel(sql_type = Text)]
     product_name: String,
 
     #[diesel(sql_type = Integer)]
     product_id: i32,
 
-    #[sql_type = "diesel::sql_types::Nullable<diesel::sql_types::Text>"]
+    #[diesel(sql_type = Nullable<Text>)]
     image_url: Option<String>,
 
-    #[sql_type = "diesel::sql_types::Nullable<diesel::sql_types::Text>"]
+    #[diesel(sql_type = Nullable<Text>)]
     region_name: Option<String>,
 }
 
@@ -154,7 +154,6 @@ async fn get_collection_stats(pool: web::Data<DBPool>, req: HttpRequest) -> Http
     match result {
         Ok(items) => HttpResponse::Ok().json(items),
         Err(err) => {
-          eprintln!("Query error: {:?}", err);
           HttpResponse::InternalServerError().body(format!("DB error: {:?}", err))
         }
     }
