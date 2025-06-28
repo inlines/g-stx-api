@@ -69,3 +69,14 @@ CREATE TABLE IF NOT EXISTS users_have_bids (
     user_login  TEXT REFERENCES users(user_login) ON DELETE CASCADE NOT NULL,
     PRIMARY KEY (release_id, user_login)
 );
+
+ALTER TABLE platforms
+  ADD COLUMN "active" BOOLEAN DEFAULT FALSE;
+
+ALTER TABLE platforms
+  ADD COLUMN "total_games" INTEGER DEFAULT 0;
+
+UPDATE platforms
+SET active = true
+select * from platforms 
+WHERE id = 6 OR id = 38 or id = 8 or id = 9 or id = 48 or id = 167

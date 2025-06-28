@@ -149,7 +149,7 @@ async fn get_collection_stats(pool: web::Data<DBPool>, req: HttpRequest) -> Http
 
     let result = diesel::sql_query(query)
         .bind::<Text, _>(&user_login)
-        .load::<CollectionStats>(&mut *conn);
+        .load::<CollectionStats>(conn);
 
     match result {
         Ok(items) => HttpResponse::Ok().json(items),
@@ -212,7 +212,7 @@ async fn get_collection(pool: web::Data<DBPool>, req: HttpRequest, query: web::Q
         .bind::<diesel::sql_types::BigInt, _>(cat)
         .bind::<diesel::sql_types::BigInt, _>(limit)
         .bind::<diesel::sql_types::BigInt, _>(offset)
-        .load::<CollectionItem>(&mut *conn);
+        .load::<CollectionItem>(conn);
 
     let count_query = r#"
         SELECT COUNT(*) as total FROM public.users_have_releases AS uhr
@@ -294,7 +294,7 @@ async fn get_wishlist(pool: web::Data<DBPool>, req: HttpRequest, query: web::Que
         .bind::<diesel::sql_types::BigInt, _>(cat)
         .bind::<diesel::sql_types::BigInt, _>(limit)
         .bind::<diesel::sql_types::BigInt, _>(offset)
-        .load::<CollectionItem>(&mut *conn);
+        .load::<CollectionItem>(conn);
 
     let count_query = r#"
         SELECT COUNT(*) as total FROM public.users_have_wishes AS uhw
@@ -362,7 +362,7 @@ async fn add_release(
     let result = diesel::sql_query(insert_query)
         .bind::<Integer, _>(data.release_id)
         .bind::<Text, _>(&user_login)
-        .execute(&mut *conn);
+        .execute(conn);
 
     match result {
         Ok(_) => HttpResponse::Ok().body({}),
@@ -409,7 +409,7 @@ async fn remove_release(
     let result = diesel::sql_query(delete_query)
         .bind::<Integer, _>(data.release_id)
         .bind::<Text, _>(&user_login)
-        .execute(&mut *conn);
+        .execute(conn);
 
     match result {
         Ok(_) => HttpResponse::Ok().body({}),
@@ -457,7 +457,7 @@ async fn add_wish(
     let result = diesel::sql_query(insert_query)
         .bind::<Integer, _>(data.release_id)
         .bind::<Text, _>(&user_login)
-        .execute(&mut *conn);
+        .execute(conn);
 
     match result {
         Ok(_) => HttpResponse::Ok().body({}),
@@ -504,7 +504,7 @@ async fn remove_wish(
     let result = diesel::sql_query(delete_query)
         .bind::<Integer, _>(data.release_id)
         .bind::<Text, _>(&user_login)
-        .execute(&mut *conn);
+        .execute(conn);
 
     match result {
         Ok(_) => HttpResponse::Ok().body({}),
@@ -552,7 +552,7 @@ async fn add_bid(
     let result = diesel::sql_query(insert_query)
         .bind::<Integer, _>(data.release_id)
         .bind::<Text, _>(&user_login)
-        .execute(&mut *conn);
+        .execute(conn);
 
     match result {
         Ok(_) => HttpResponse::Ok().body({}),
@@ -599,7 +599,7 @@ async fn remove_bid(
     let result = diesel::sql_query(delete_query)
         .bind::<Integer, _>(data.release_id)
         .bind::<Text, _>(&user_login)
-        .execute(&mut *conn);
+        .execute(conn);
 
     match result {
         Ok(_) => HttpResponse::Ok().body({}),

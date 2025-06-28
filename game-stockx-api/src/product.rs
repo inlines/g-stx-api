@@ -137,8 +137,8 @@ pub struct ProductReleaseInfo {
     #[diesel(sql_type = Text)]
     pub platform_name: String,
 
-    #[diesel(sql_type = Nullable<Integer>)]
-    pub platform_generation: Option<i32>,
+    #[diesel(sql_type = Integer)]
+    pub platform_id: i32,
 
     #[diesel(sql_type = Nullable<Integer>)]
     pub release_status: Option<i32>,
@@ -208,7 +208,7 @@ pub async fn get(pool: Data<DBPool>, path: Path<(i64,)>, req: HttpRequest) -> Ht
 
                 let screenshots_result = diesel::sql_query(screenshot_query)
                     .bind::<diesel::sql_types::BigInt, _>(product_id)
-                    .load::<ScreenshotUrl>(&mut *conn);
+                    .load::<ScreenshotUrl>(conn);
 
                 let release_query = r#"
                     SELECT
@@ -217,7 +217,7 @@ pub async fn get(pool: Data<DBPool>, path: Path<(i64,)>, req: HttpRequest) -> Ht
                         r.release_status AS release_status,
                         reg.name AS release_region,
                         p.name AS platform_name,
-                        p.generation AS platform_generation,
+                        p.id AS platform_id,
                         COALESCE(ARRAY_AGG(uhb.user_login) FILTER (WHERE uhb.user_login IS NOT NULL), ARRAY[]::text[]) AS bid_user_logins
                     FROM releases AS r
                     LEFT JOIN platforms AS p ON r.platform = p.id
@@ -226,7 +226,7 @@ pub async fn get(pool: Data<DBPool>, path: Path<(i64,)>, req: HttpRequest) -> Ht
                     WHERE r.product_id = $1
                     GROUP BY
                         r.id, r.release_date, r.release_status,
-                        reg.name, p.name, p.generation
+                        reg.name, p.name, p.id
                     ORDER BY r.release_date;
                 "#;
 
