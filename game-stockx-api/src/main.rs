@@ -57,7 +57,7 @@ async fn main() -> io::Result<()> {
             .service(collection::remove_bid)
             .service(platforms::get_platforms)
     })
-    .bind("127.0.0.1:9090")?
+    .bind("0.0.0.0:9090")?
     .run()
     .await
 }
