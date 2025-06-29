@@ -75,8 +75,3 @@ ALTER TABLE platforms
 
 ALTER TABLE platforms
   ADD COLUMN "total_games" INTEGER DEFAULT 0;
-
-UPDATE platforms
-SET active = true
-select * from platforms 
-WHERE id = 6 OR id = 38 or id = 8 or id = 9 or id = 48 or id = 167
