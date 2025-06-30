@@ -7,6 +7,7 @@ use actix_web::{middleware, App, HttpServer, web, http};
 use diesel::r2d2::ConnectionManager;
 use diesel::PgConnection;
 use r2d2::{Pool, PooledConnection};
+use actix_web_prom::{PrometheusMetricsBuilder, PrometheusMetrics};
 
 mod constants;
 mod product;
@@ -31,8 +32,15 @@ async fn main() -> io::Result<()> {
         .build(manager)
         .expect("Failed to create pool");
 
+
+    let prometheus = PrometheusMetricsBuilder::new("api")
+        .endpoint("/metrics")
+        .build()
+        .unwrap();
+
     HttpServer::new(move || {
         App::new()
+            .wrap(prometheus.clone())
             .app_data(web::Data::new(pool.clone()))
             .wrap(middleware::Logger::default())
             .wrap(

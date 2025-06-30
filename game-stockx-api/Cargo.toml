@@ -25,3 +25,4 @@ dotenv = "0.15.0"
 bigdecimal = { version = "0.4", features = ["serde"]}
 num-traits = "0.2"
 actix-cors = "0.7.1"
+actix-web-prom = "0.10.0"
