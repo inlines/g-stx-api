@@ -57,6 +57,9 @@ struct CollectionStats {
 
     #[sql_type = "diesel::sql_types::BigInt"]
     have_count: i64,
+    
+    #[sql_type = "diesel::sql_types::BigInt"]
+    have_games: i64,
 
     #[sql_type = "diesel::sql_types::Array<diesel::sql_types::Integer>"]
     have_ids: Vec<i32>,
@@ -105,6 +108,12 @@ async fn get_collection_stats(pool: web::Data<DBPool>, req: HttpRequest) -> Http
 
         COALESCE(h.release_count, 0) AS have_count,
         COALESCE(h.release_ids, ARRAY[]::int[]) AS have_ids,
+
+		(
+	        SELECT COUNT(DISTINCT r.product_id)
+	        FROM unnest(COALESCE(h.release_ids, ARRAY[]::int[])) AS rel_id
+	        JOIN releases r ON r.id = rel_id
+	    ) AS have_games,
 
         COALESCE(w.release_count, 0) AS wish_count,
         COALESCE(w.release_ids, ARRAY[]::int[]) AS wish_ids,
