@@ -4,7 +4,11 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+actix = "0.13"
 actix-web = "4"
+tokio = { version = "1", features = ["full"] }
+actix-rt = "2.5.0"
+actix-web-actors = "4"
 diesel = { version = "2.1", features = ["postgres", "r2d2", "chrono", "uuid"] }
 r2d2 = "0.8.8"
 r2d2-diesel = "1.0.0"
@@ -14,7 +18,7 @@ jsonwebtoken = "9"
 argon2 = "0.5"
 rand_core = "0.6"
 rand = "0.8"
-sqlx = { version = "0.7", features = ["postgres", "runtime-tokio-rustls", "macros", "uuid"] }
+sqlx = { version = "0.7", features = ["postgres", "runtime-tokio-native-tls", "macros", "uuid"] }
 
 env_logger = "0.7.1"
 chrono = { version = "0.4", features = ["serde"] }

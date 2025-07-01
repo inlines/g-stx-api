@@ -10,3 +10,4 @@ DROP TABLE IF EXISTS product_platforms;
 DROP TABLE IF EXISTS users_have_wishes;
 DROP TABLE IF EXISTS users_have_bids;
 DROP TABLE IF EXISTS users;
+DROP TABLE IF EXISTS messages;

@@ -75,3 +75,15 @@ ALTER TABLE platforms
 
 ALTER TABLE platforms
   ADD COLUMN "total_games" INTEGER DEFAULT 0;
+
+CREATE TABLE IF NOT EXISTS messages (
+    id SERIAL PRIMARY KEY,
+    sender_login TEXT NOT NULL REFERENCES users(user_login),
+    recipient_login TEXT NOT NULL REFERENCES users(user_login),
+    body TEXT NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    read BOOLEAN NOT NULL DEFAULT FALSE
+);
+
+CREATE INDEX idx_messages_recipient ON messages (recipient_login);
+CREATE INDEX idx_messages_sender ON messages (sender_login);
