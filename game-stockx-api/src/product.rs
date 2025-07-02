@@ -223,7 +223,7 @@ pub async fn get(pool: Data<DBPool>, path: Path<(i64,)>, req: HttpRequest) -> Ht
                     LEFT JOIN platforms AS p ON r.platform = p.id
                     INNER JOIN regions AS reg ON reg.id = r.release_region
                     LEFT JOIN users_have_bids AS uhb ON uhb.release_id = r.id
-                    WHERE r.product_id = $1
+                    WHERE r.product_id = $1 AND p.active = true
                     GROUP BY
                         r.id, r.release_date, r.release_status,
                         reg.name, p.name, p.id
