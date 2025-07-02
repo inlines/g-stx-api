@@ -71,10 +71,10 @@ CREATE TABLE IF NOT EXISTS users_have_bids (
 );
 
 ALTER TABLE platforms
-  ADD COLUMN "active" BOOLEAN DEFAULT FALSE;
+  ADD COLUMN IF NOT EXISTS "active" BOOLEAN DEFAULT FALSE;
 
 ALTER TABLE platforms
-  ADD COLUMN "total_games" INTEGER DEFAULT 0;
+  ADD COLUMN IF NOT EXISTS "total_games" INTEGER DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS messages (
     id SERIAL PRIMARY KEY,
@@ -85,5 +85,5 @@ CREATE TABLE IF NOT EXISTS messages (
     read BOOLEAN NOT NULL DEFAULT FALSE
 );
 
-CREATE INDEX idx_messages_recipient ON messages (recipient_login);
-CREATE INDEX idx_messages_sender ON messages (sender_login);
+CREATE INDEX IF NOT EXISTS idx_messages_recipient ON messages (recipient_login);
+CREATE INDEX IF NOT EXISTS idx_messages_sender ON messages (sender_login);
