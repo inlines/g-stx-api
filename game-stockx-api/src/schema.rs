@@ -8,6 +8,17 @@ diesel::table! {
 }
 
 diesel::table! {
+    messages (id) {
+        id -> Int4,
+        sender_login -> Text,
+        recipient_login -> Text,
+        body -> Text,
+        created_at -> Timestamptz,
+        read -> Bool,
+    }
+}
+
+diesel::table! {
     platforms (id) {
         id -> Int4,
         abbreviation -> Nullable<Text>,
@@ -110,6 +121,7 @@ diesel::joinable!(users_have_wishes -> releases (release_id));
 
 diesel::allow_tables_to_appear_in_same_query!(
     covers,
+    messages,
     platforms,
     product_platforms,
     products,
