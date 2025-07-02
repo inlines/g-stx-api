@@ -8,11 +8,12 @@ use diesel::PgConnection;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use actix_web_actors::ws::ProtocolError;
-use diesel::sql_types::{Text, Integer, Nullable, BigInt, Timestamptz};
+use diesel::sql_types::{Text, Timestamptz};
 use crate::constants::{CONNECTION_POOL_ERROR};
 use crate::auth::{verify_jwt};
 use actix_web::http::header;
 use crate::{DBPool};
+use actix_rt::task::spawn_blocking;
 
 #[derive(Message, Serialize, Deserialize, Debug, Clone)]
 #[rtype(result = "()")]
@@ -88,20 +89,22 @@ impl Handler<ChatCommand> for ChatServer {
                     let _ = addr.do_send(message.clone());
                 }
 
-                // Сохранение сообщения в базу данных
-                let query = r#"
-                    INSERT INTO messages (sender_login, recipient_login, body)
-                    VALUES ($1, $2, $3)
-                "#;
+                spawn_blocking(move || {
+                    // Сохранение сообщения в базу данных
+                    let query = r#"
+                        INSERT INTO messages (sender_login, recipient_login, body)
+                        VALUES ($1, $2, $3)
+                    "#;
 
-                // Выполняем запрос с привязкой параметров
-                let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
-                diesel::sql_query(query)
-                    .bind::<diesel::sql_types::Text, _>(sender)  // Sender
-                    .bind::<diesel::sql_types::Text, _>(recipient)  // Recipient
-                    .bind::<diesel::sql_types::Text, _>(body)  // Body
-                    .execute(conn)
-                    .expect("Error saving message to DB");
+                    // Выполняем запрос с привязкой параметров
+                    let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
+                    diesel::sql_query(query)
+                        .bind::<diesel::sql_types::Text, _>(sender)  // Sender
+                        .bind::<diesel::sql_types::Text, _>(recipient)  // Recipient
+                        .bind::<diesel::sql_types::Text, _>(body)  // Body
+                        .execute(conn)
+                        .expect("Error saving message to DB");
+                });
             }
         }
     }
@@ -115,12 +118,24 @@ pub struct ChatSession {
 impl Actor for ChatSession {
     type Context = ws::WebsocketContext<Self>;
 
+    // fn started(&mut self, ctx: &mut Self::Context) {
+    //     self.addr.do_send(ChatCommand::Connect {
+    //         login: self.login.clone(),
+    //         addr: ctx.address().recipient(),
+    //     });
+    // }
+
     fn started(&mut self, ctx: &mut Self::Context) {
         self.addr.do_send(ChatCommand::Connect {
             login: self.login.clone(),
             addr: ctx.address().recipient(),
         });
+
+        ctx.run_interval(std::time::Duration::from_secs(30), |_, ctx| {
+            ctx.ping(b"keep-alive");
+        });
     }
+    
 
     fn stopped(&mut self, _: &mut Self::Context) {
         self.addr.do_send(ChatCommand::Disconnect {
@@ -129,19 +144,59 @@ impl Actor for ChatSession {
     }
 }
 
+// impl StreamHandler<Result<ws::Message, ProtocolError>> for ChatSession {
+//     fn handle(&mut self, msg: Result<ws::Message, ProtocolError>, ctx: &mut Self::Context) {
+//         if let Ok(ws::Message::Text(text)) = msg {
+//             if let Ok(parsed) = serde_json::from_str::<ClientMessage>(&text) {
+//                 self.addr.do_send(ChatCommand::SendMessage {
+//                     sender: parsed.sender,
+//                     recipient: parsed.recipient,
+//                     body: parsed.body,
+//                 });
+//             }
+//         }
+//     }
+// }
+
 impl StreamHandler<Result<ws::Message, ProtocolError>> for ChatSession {
     fn handle(&mut self, msg: Result<ws::Message, ProtocolError>, ctx: &mut Self::Context) {
-        if let Ok(ws::Message::Text(text)) = msg {
-            if let Ok(parsed) = serde_json::from_str::<ClientMessage>(&text) {
-                self.addr.do_send(ChatCommand::SendMessage {
-                    sender: parsed.sender,
-                    recipient: parsed.recipient,
-                    body: parsed.body,
-                });
+        match msg {
+            Ok(ws::Message::Text(text)) => {
+                if let Ok(parsed) = serde_json::from_str::<ClientMessage>(&text) {
+                    self.addr.do_send(ChatCommand::SendMessage {
+                        sender: parsed.sender,
+                        recipient: parsed.recipient,
+                        body: parsed.body,
+                    });
+                }
+            }
+            Ok(ws::Message::Ping(msg)) => {
+                ctx.pong(&msg);
+            }
+            Ok(ws::Message::Pong(_)) => {
+                // можно логировать
+            }
+            Ok(ws::Message::Close(reason)) => {
+                println!("WebSocket closed: {:?}", reason);
+                ctx.stop();
+            }
+            Ok(ws::Message::Binary(_)) => {
+                // Игнорируем или логируем
+            }
+            Ok(ws::Message::Continuation(_)) => {
+                // Игнорируем или логируем
+            }
+            Ok(ws::Message::Nop) => {
+                // Ничего не делаем (это heartbeat от actix, можно игнорировать)
+            }
+            Err(e) => {
+                println!("WebSocket error: {:?}", e);
+                ctx.stop();
             }
         }
     }
 }
+
 
 impl Handler<ClientMessage> for ChatSession {
     type Result = ();
