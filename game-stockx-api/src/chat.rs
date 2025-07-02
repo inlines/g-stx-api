@@ -1,7 +1,6 @@
 use actix::prelude::*;
 use actix_web::{Error, HttpRequest, HttpResponse, web};
 use actix_web_actors::ws;
-use chrono::Utc;
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager};
 use diesel::PgConnection;
@@ -14,6 +13,7 @@ use crate::auth::{verify_jwt};
 use actix_web::http::header;
 use crate::{DBPool};
 use actix_rt::task::spawn_blocking;
+use chrono::{DateTime, Utc};
 
 #[derive(Message, Serialize, Deserialize, Debug, Clone)]
 #[rtype(result = "()")]
@@ -118,13 +118,6 @@ pub struct ChatSession {
 impl Actor for ChatSession {
     type Context = ws::WebsocketContext<Self>;
 
-    // fn started(&mut self, ctx: &mut Self::Context) {
-    //     self.addr.do_send(ChatCommand::Connect {
-    //         login: self.login.clone(),
-    //         addr: ctx.address().recipient(),
-    //     });
-    // }
-
     fn started(&mut self, ctx: &mut Self::Context) {
         self.addr.do_send(ChatCommand::Connect {
             login: self.login.clone(),
@@ -143,20 +136,6 @@ impl Actor for ChatSession {
         });
     }
 }
-
-// impl StreamHandler<Result<ws::Message, ProtocolError>> for ChatSession {
-//     fn handle(&mut self, msg: Result<ws::Message, ProtocolError>, ctx: &mut Self::Context) {
-//         if let Ok(ws::Message::Text(text)) = msg {
-//             if let Ok(parsed) = serde_json::from_str::<ClientMessage>(&text) {
-//                 self.addr.do_send(ChatCommand::SendMessage {
-//                     sender: parsed.sender,
-//                     recipient: parsed.recipient,
-//                     body: parsed.body,
-//                 });
-//             }
-//         }
-//     }
-// }
 
 impl StreamHandler<Result<ws::Message, ProtocolError>> for ChatSession {
     fn handle(&mut self, msg: Result<ws::Message, ProtocolError>, ctx: &mut Self::Context) {
@@ -297,7 +276,7 @@ pub struct DialogDto {
     #[sql_type = "Text"]
     pub last_message: String,
     #[sql_type = "Timestamptz"]
-    pub last_message_time: chrono::NaiveDateTime,
+    pub last_message_time: DateTime<Utc>,
 }
 
 #[get("/dialogs")]
