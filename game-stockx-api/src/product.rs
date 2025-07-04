@@ -59,7 +59,7 @@ pub async fn list(pool: Data<DBPool>, query: web::Query<Pagination>) -> HttpResp
             prod.id AS id,
             prod.name AS name,
             prod.first_release_date AS first_release_date,
-            cov.image_url AS image_url
+            '//89.104.66.193/static/covers-thumb/' || cov.id ||'.jpg' AS image_url
             FROM product_platforms AS pp
             INNER JOIN products as prod ON pp.product_id = prod.id
             LEFT JOIN covers AS cov ON prod.cover_id = cov.id

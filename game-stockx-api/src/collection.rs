@@ -202,7 +202,7 @@ async fn get_collection(pool: web::Data<DBPool>, req: HttpRequest, query: web::Q
             p.name as platform_name,
             prod.id as product_id,
             prod.name AS product_name,
-            cover.image_url,
+            '//89.104.66.193/static/covers-thumb/' || cov.id ||'.jpg' AS image_url,
             reg.name AS region_name
         FROM public.users_have_releases AS uhr
         INNER JOIN releases AS r ON uhr.release_id = r.id
@@ -284,7 +284,7 @@ async fn get_wishlist(pool: web::Data<DBPool>, req: HttpRequest, query: web::Que
             p.name as platform_name,
             prod.id as product_id,
             prod.name AS product_name,
-            cover.image_url,
+            '//89.104.66.193/static/covers-thumb/' || cov.id ||'.jpg' AS image_url,
             reg.name AS region_name
         FROM public.users_have_wishes AS uhw
         INNER JOIN releases AS r ON uhw.release_id = r.id
