@@ -187,7 +187,7 @@ pub async fn get(pool: Data<DBPool>, path: Path<(i64,)>, req: HttpRequest) -> Ht
             prod.name AS name,
             prod.summary AS summary,
             prod.first_release_date AS first_release_date,
-            '//89.104.66.193/static/covers-full/' || cover.id ||'.jpg' AS image_url
+            '//89.104.66.193/static/covers-full/' || cov.id ||'.jpg' AS image_url
         FROM public.products AS prod
         LEFT JOIN covers AS cov ON prod.cover_id = cov.id
         WHERE prod.id = $1
