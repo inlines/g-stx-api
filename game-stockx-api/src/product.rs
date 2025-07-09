@@ -1,7 +1,7 @@
 use diesel::prelude::*;
 use actix_web::web::{self, Data, Path};
 use actix_web::{HttpRequest, HttpResponse};
-use diesel::sql_types::{Integer, Text, Nullable, BigInt};
+use diesel::sql_types::{Integer, Text, Nullable, BigInt, Bool, Array};
 use diesel::{RunQueryDsl};
 use serde::{Deserialize, Serialize};
 use crate::constants::{ CONNECTION_POOL_ERROR};
@@ -53,40 +53,50 @@ pub async fn list(pool: Data<DBPool>, query: web::Query<Pagination>) -> HttpResp
     let offset = query.offset.unwrap_or(0);
     let cat = query.cat;
     let text_query = format!("%{}%", query.query.clone().unwrap_or_default());
+    let ignore_digital = query.ignore_digital.unwrap_or(false);
 
-    let query = r#"
+    // === Основной SELECT ===
+    let mut base_query = String::from(r#"
         SELECT 
             prod.id AS id,
             prod.name AS name,
             prod.first_release_date AS first_release_date,
-            '//89.104.66.193/static/covers-thumb/' || cov.id ||'.jpg' AS image_url
-            FROM product_platforms AS pp
-            INNER JOIN products as prod ON pp.product_id = prod.id
-            LEFT JOIN covers AS cov ON prod.cover_id = cov.id
+            '//89.104.66.193/static/covers-thumb/' || cov.id || '.jpg' AS image_url
+        FROM product_platforms AS pp
+        INNER JOIN products AS prod ON pp.product_id = prod.id
+        LEFT JOIN covers AS cov ON prod.cover_id = cov.id
         WHERE pp.platform_id = $4 AND prod.name ILIKE $3
-        ORDER BY prod.first_release_date ASC, prod.name ASC
-        LIMIT $1 OFFSET $2
-    "#;
+    "#);
 
-    let results = diesel::sql_query(query)
-        .bind::<diesel::sql_types::BigInt, _>(limit) // Привязываем параметр LIMIT
-        .bind::<diesel::sql_types::BigInt, _>(offset) // Привязываем параметр OFFSET
+    if ignore_digital {
+        base_query.push_str(" AND pp.digital_only = false");
+    }
+
+    base_query.push_str(" ORDER BY prod.first_release_date ASC, prod.name ASC LIMIT $1 OFFSET $2");
+
+    let results = diesel::sql_query(base_query)
+        .bind::<diesel::sql_types::BigInt, _>(limit)
+        .bind::<diesel::sql_types::BigInt, _>(offset)
         .bind::<diesel::sql_types::Text, _>(text_query.clone())
         .bind::<diesel::sql_types::BigInt, _>(cat)
         .load::<ProductListItem>(conn);
 
-    let count_query = r#"
+    // === COUNT SELECT ===
+    let mut count_query = String::from(r#"
         SELECT COUNT(*) as total
         FROM product_platforms AS pp
-        INNER JOIN products as prod ON pp.product_id = prod.id
+        INNER JOIN products AS prod ON pp.product_id = prod.id
         WHERE pp.platform_id = $1 AND prod.name ILIKE $2
-    "#;
+    "#);
+
+    if ignore_digital {
+        count_query.push_str(" AND pp.digital_only = false");
+    }
 
     let count_result = diesel::sql_query(count_query)
         .bind::<diesel::sql_types::BigInt, _>(cat)
         .bind::<diesel::sql_types::Text, _>(text_query.clone())
         .load::<CountResult>(conn);
-
 
     match (results, count_result) {
         (Ok(items), Ok(count)) => {
@@ -94,9 +104,7 @@ pub async fn list(pool: Data<DBPool>, query: web::Query<Pagination>) -> HttpResp
                 items,
                 total_count: count.get(0).map(|c| c.total).unwrap_or(0),
             };
-            // Возвращаем полученные данные как JSON
-            HttpResponse::Ok()
-                .json(response) // отправляем массив ProductListItem
+            HttpResponse::Ok().json(response)
         }
         (Err(err), _) | (_, Err(err)) => {
             eprintln!("Database error: {:?}", err);
@@ -104,6 +112,7 @@ pub async fn list(pool: Data<DBPool>, query: web::Query<Pagination>) -> HttpResp
         }
     }
 }
+
 
 #[derive(Debug, Deserialize, Serialize, QueryableByName)]
 pub struct ProductProperties {
@@ -143,8 +152,15 @@ pub struct ProductReleaseInfo {
     #[diesel(sql_type = Nullable<Integer>)]
     pub release_status: Option<i32>,
 
-    #[sql_type = "diesel::sql_types::Array<diesel::sql_types::Text>"]
+    #[diesel(sql_type = Array<Text>)]
     bid_user_logins: Vec<String>,
+
+    #[diesel(sql_type = Bool)]
+    pub digital_only: bool,
+
+    #[diesel(sql_type = Nullable<Array<Text>>)]
+    pub serial: Option<Vec<String>>
+
 }
 
 #[derive(QueryableByName)]
@@ -215,6 +231,8 @@ pub async fn get(pool: Data<DBPool>, path: Path<(i64,)>, req: HttpRequest) -> Ht
                         r.release_date AS release_date,
                         r.id AS release_id,
                         r.release_status AS release_status,
+                        r.digital_only AS digital_only,
+                        r.serial AS serial,
                         reg.name AS release_region,
                         p.name AS platform_name,
                         p.id AS platform_id,
@@ -227,7 +245,7 @@ pub async fn get(pool: Data<DBPool>, path: Path<(i64,)>, req: HttpRequest) -> Ht
                     GROUP BY
                         r.id, r.release_date, r.release_status,
                         reg.name, p.name, p.id
-                    ORDER BY r.release_date;
+                    ORDER BY p.name;
                 "#;
 
                 let release_result = diesel::sql_query(release_query)
