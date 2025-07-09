@@ -33,6 +33,7 @@ diesel::table! {
     product_platforms (product_id, platform_id) {
         product_id -> Int4,
         platform_id -> Int4,
+        digital_only -> Bool,
     }
 }
 
@@ -61,6 +62,8 @@ diesel::table! {
         platform -> Int4,
         release_status -> Nullable<Int4>,
         release_region -> Nullable<Int4>,
+        digital_only -> Bool,
+        serial -> Nullable<Array<Nullable<Text>>>,
     }
 }
 
