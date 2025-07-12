@@ -72,7 +72,7 @@ pub async fn list(pool: Data<DBPool>, query: web::Query<Pagination>) -> HttpResp
         base_query.push_str(" AND pp.digital_only = false");
     }
 
-    base_query.push_str(" ORDER BY prod.first_release_date ASC, prod.name ASC LIMIT $1 OFFSET $2");
+    base_query.push_str(" ORDER BY prod.name ASC LIMIT $1 OFFSET $2");
 
     let results = diesel::sql_query(base_query)
         .bind::<diesel::sql_types::BigInt, _>(limit)
