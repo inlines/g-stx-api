@@ -1,5 +1,5 @@
 use diesel::prelude::*;
-use actix_web::web::{self, Data};
+use actix_web::web::{Data};
 use actix_web::{HttpResponse};
 use diesel::sql_types::{Integer, Text, Nullable};
 use diesel::{RunQueryDsl};
