@@ -3,7 +3,7 @@ use crate::constants::{CONNECTION_POOL_ERROR};
 use crate::{DBPool};
 use crate::auth::{verify_jwt};
 use diesel::prelude::*;
-use diesel::sql_types::{Text, Integer, Nullable, BigInt};
+use diesel::sql_types::{Text, Integer, Nullable, BigInt, Array};
 use actix_web::http::header;
 use serde::{Deserialize, Serialize};
 use crate::pagination::Pagination;
@@ -17,6 +17,9 @@ struct TrackReleaseRequest {
 struct CollectionItem {
     #[diesel(sql_type = Integer)]
     release_id: i32,
+
+    #[diesel(sql_type = Nullable<Array<Text>>)]
+    serial: Option<Vec<String>>,
 
     #[diesel(sql_type = Nullable<Integer>)]
     release_date: Option<i32>,
@@ -199,6 +202,7 @@ async fn get_collection(pool: web::Data<DBPool>, req: HttpRequest, query: web::Q
         SELECT 
             uhr.release_id,
             r.release_date,
+            r.serial,
             p.name as platform_name,
             prod.id as product_id,
             prod.name AS product_name,
