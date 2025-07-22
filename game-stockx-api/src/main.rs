@@ -9,6 +9,7 @@ use actix_web::{middleware, App, HttpServer, web, http};
 use diesel::r2d2::ConnectionManager;
 use diesel::PgConnection;
 use r2d2::{Pool, PooledConnection};
+use crate::redis::{create_redis_pool, RedisPool};
 
 use actix_web_prom::{PrometheusMetricsBuilder};
 use actix::prelude::*;
@@ -21,7 +22,8 @@ mod register;
 mod auth;
 mod collection;
 mod platforms;
-mod chat;  // Добавляем модуль chat
+mod chat;
+mod redis;
 
 pub type DBPool = Pool<ConnectionManager<PgConnection>>;
 pub type DBPooledConnection = PooledConnection<ConnectionManager<PgConnection>>;
@@ -48,10 +50,18 @@ async fn main() -> io::Result<()> {
     let chat_server = chat::ChatServer::new(pool.clone()).start();
     let chat_server_data = web::Data::new(chat_server);
 
+    let redis_url = std::env::var("REDIS_URL")
+        .unwrap_or("redis://redis:6379".to_string());
+    
+    let redis_pool = create_redis_pool(&redis_url)
+        .await
+        .expect("Failed to create Redis pool");
+
     // Запуск HTTP-сервера
     HttpServer::new(move || {
         App::new()
             .wrap(prometheus.clone())
+            .app_data(web::Data::new(redis_pool.clone()))
             .app_data(web::Data::new(pool.clone()))  // Передаем пул базы данных
             .app_data(chat_server_data.clone())
             .wrap(middleware::Logger::default())
