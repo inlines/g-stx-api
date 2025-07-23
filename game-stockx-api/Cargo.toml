@@ -6,6 +6,7 @@ edition = "2024"
 [dependencies]
 actix = "0.13"
 actix-web = "4"
+async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 actix-rt = "2.5.0"
 actix-web-actors = "4"
@@ -19,11 +20,11 @@ argon2 = "0.5"
 rand_core = "0.6"
 rand = "0.8"
 sqlx = { version = "0.7", features = ["postgres", "runtime-tokio-native-tls", "macros", "uuid"] }
-redis = "0.23"
+redis = { version = "0.23", features = ["tokio-comp"] }
 bb8 = "0.8"
-bb8-redis = "0.13"
-
-env_logger = "0.7.1"
+bb8-redis = "0.14"
+log = "0.4"
+env_logger = "0.9" # или другой логгер
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.17.0", features = ["v4"] }
 

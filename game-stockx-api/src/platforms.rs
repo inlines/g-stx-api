@@ -1,46 +1,57 @@
-use diesel::prelude::*;
-use actix_web::web::{Data};
-use actix_web::{HttpResponse};
-use diesel::sql_types::{Integer, Text, Nullable};
-use diesel::{RunQueryDsl};
-use serde::{Serialize};
-use crate::constants::{ CONNECTION_POOL_ERROR};
+use actix_web::{get, web::Data, HttpResponse};
+use diesel::{sql_types::{Integer, Text, Nullable}, QueryableByName, RunQueryDsl};
+use serde::Serialize;
 use crate::{DBPool};
 
+#[derive(Debug, Serialize, QueryableByName)]
+pub struct PlatformItem {
+    #[diesel(sql_type = Integer)]
+    pub id: i32,
 
-#[derive(Serialize, QueryableByName)]
-struct PlatformItem {
-  #[diesel(sql_type = Integer)]
-  id: i32,
+    #[diesel(sql_type = Text)]
+    pub abbreviation: String,
 
-  #[diesel(sql_type = Text)]
-  abbreviation: String,
+    #[diesel(sql_type = Text)]
+    pub name: String,
 
-  #[diesel(sql_type = Text)]
-  name: String,
+    #[diesel(sql_type = Nullable<Integer>)]
+    pub generation: Option<i32>,
 
-  #[diesel(sql_type = Nullable<Integer>)]
-  generation: Option<i32>,
-
-  #[diesel(sql_type = Integer)]
-  total_games: i32,
+    #[diesel(sql_type = Integer)]
+    pub total_games: i32,
 }
 
 #[get("/platforms")]
 pub async fn get_platforms(pool: Data<DBPool>) -> HttpResponse {
-  let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
-  let query = r#"
-    SELECT id, abbreviation, name, generation, total_games
-	  FROM public.platforms where active = true
-  "#;
+    let conn = &mut match pool.get() {
+        Ok(conn) => conn,
+        Err(e) => {
+            log::error!("Failed to get DB connection: {}", e);
+            return HttpResponse::InternalServerError()
+                .body("Database connection error");
+        }
+    };
 
-  let result = diesel::sql_query(query)
-    .load::<PlatformItem>(conn);
-  
-  match result {
-    Ok(items) => HttpResponse::Ok().json(items),
-    Err(err) => {
-      HttpResponse::InternalServerError().body(format!("DB error: {:?}", err))
+    let query = r#"
+        SELECT 
+            id, 
+            abbreviation, 
+            name, 
+            generation, 
+            total_games
+        FROM 
+            public.platforms 
+        WHERE 
+            active = true
+        ORDER BY
+            name ASC
+    "#;
+
+    match diesel::sql_query(query).load::<PlatformItem>(conn) {
+        Ok(items) => HttpResponse::Ok().json(items),
+        Err(e) => {
+            log::error!("Database query error: {}", e);
+            HttpResponse::InternalServerError().body("Failed to load platforms")
+        }
     }
-  }
 }

@@ -9,7 +9,7 @@ use actix_web::{middleware, App, HttpServer, web, http};
 use diesel::r2d2::ConnectionManager;
 use diesel::PgConnection;
 use r2d2::{Pool, PooledConnection};
-use crate::redis::{create_redis_pool, RedisPool};
+use crate::redis::{create_redis_pool};
 
 use actix_web_prom::{PrometheusMetricsBuilder};
 use actix::prelude::*;
@@ -40,6 +40,14 @@ async fn main() -> io::Result<()> {
         .build(manager)
         .expect("Failed to create pool");
 
+    // Инициализация Redis
+    let redis_url = env::var("REDIS_URL")
+        .unwrap_or_else(|_| "redis://redis:6379".to_string());
+    
+    let redis_pool = create_redis_pool(&redis_url)
+        .await
+        .expect("Failed to create Redis pool");
+
     // Инициализация Prometheus
     let prometheus = PrometheusMetricsBuilder::new("api")
         .endpoint("/metrics")
@@ -49,13 +57,6 @@ async fn main() -> io::Result<()> {
     // Создание серверного экземпляра ChatServer
     let chat_server = chat::ChatServer::new(pool.clone()).start();
     let chat_server_data = web::Data::new(chat_server);
-
-    let redis_url = std::env::var("REDIS_URL")
-        .unwrap_or("redis://redis:6379".to_string());
-    
-    let redis_pool = create_redis_pool(&redis_url)
-        .await
-        .expect("Failed to create Redis pool");
 
     // Запуск HTTP-сервера
     HttpServer::new(move || {
