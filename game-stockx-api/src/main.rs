@@ -28,6 +28,7 @@ mod redis;
 pub type DBPool = Pool<ConnectionManager<PgConnection>>;
 pub type DBPooledConnection = PooledConnection<ConnectionManager<PgConnection>>;
 
+
 #[actix_web::main]
 async fn main() -> io::Result<()> {
     dotenv().ok();

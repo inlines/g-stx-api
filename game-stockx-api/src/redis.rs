@@ -1,7 +1,7 @@
 use bb8::Pool;
 use bb8_redis::RedisConnectionManager;
-use bb8_redis::redis::{RedisError, AsyncCommands};
-use serde::{Serialize, de::DeserializeOwned};
+use bb8_redis::redis::{AsyncCommands, RedisError};
+use serde::{de::DeserializeOwned, Serialize};
 use std::fmt;
 use async_trait::async_trait;
 
@@ -51,34 +51,33 @@ pub async fn create_redis_pool(redis_url: &str) -> Result<RedisPool, CacheError>
 }
 
 #[async_trait]
-pub trait RedisCacheExt: Send + Sync {
-    async fn get_json<T>(&self, key: &str) -> Result<Option<T>, CacheError>
+pub trait RedisCacheExt {
+    async fn get_json<T>(&mut self, key: &str) -> Result<Option<T>, CacheError>
     where
         T: DeserializeOwned + Send + 'static;
     
-    async fn set_json<T>(&self, key: &str, value: &T, ttl: usize) -> Result<(), CacheError>
+    async fn set_json<T>(&mut self, key: &str, value: &T, ttl: usize) -> Result<(), CacheError>
     where
         T: Serialize + Send + Sync + 'static;
 }
 
 #[async_trait]
-impl RedisCacheExt for RedisPool {
-    async fn get_json<T>(&self, key: &str) -> Result<Option<T>, CacheError>
+impl RedisCacheExt for bb8_redis::redis::aio::Connection {
+    async fn get_json<T>(&mut self, key: &str) -> Result<Option<T>, CacheError>
     where
         T: DeserializeOwned + Send + 'static,
     {
-        let mut conn = self.get().await?;
-        let data: Option<String> = conn.get(key).await?;
+        let data: Option<String> = AsyncCommands::get(self, key).await?;
         data.map(|json| serde_json::from_str(&json).map_err(Into::into))
             .transpose()
     }
 
-    async fn set_json<T>(&self, key: &str, value: &T, ttl: usize) -> Result<(), CacheError>
+    async fn set_json<T>(&mut self, key: &str, value: &T, ttl: usize) -> Result<(), CacheError>
     where
         T: Serialize + Send + Sync + 'static,
     {
-        let mut conn = self.get().await?;
         let json = serde_json::to_string(value)?;
-        conn.set_ex(key, json, ttl as u64).await.map_err(Into::into)
+        let _: String = AsyncCommands::set_ex(self, key, json, ttl as u64).await?;
+        Ok(())
     }
 }
