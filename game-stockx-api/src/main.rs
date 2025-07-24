@@ -15,7 +15,8 @@ use actix_web_prom::{PrometheusMetricsBuilder};
 use actix::prelude::*;
 
 mod constants;
-mod product;
+mod product_list;
+mod product_details;
 mod response;
 mod pagination;
 mod register;
@@ -76,8 +77,8 @@ async fn main() -> io::Result<()> {
             )
             .service(
                 web::scope("/api")
-                    .service(product::list)
-                    .service(product::get)
+                    .service(product_list::list)
+                    .service(product_details::get)
                     .service(register::register)
                     .service(auth::login)
                     .service(collection::add_release)
