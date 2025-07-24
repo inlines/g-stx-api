@@ -5,10 +5,10 @@ use diesel::sql_types::{Integer, Text, Nullable, BigInt, Bool, Array};
 use diesel::{RunQueryDsl};
 use serde::{Deserialize, Serialize};
 use crate::constants::{ CONNECTION_POOL_ERROR};
-use crate::{DBPool};
 use crate::pagination::Pagination;
 use actix_web::http::header;
 use crate::auth::{verify_jwt};
+use crate::{DBPool, redis::{RedisPool, RedisCacheExt}};
 
 #[derive(Debug, Deserialize, Serialize)]
 pub struct Product {
@@ -39,21 +39,50 @@ pub struct CountResult {
     pub total: i64,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Deserialize)]
 pub struct ProductListResponse {
     items: Vec<ProductListItem>,
     total_count: i64,
 }
 
-#[get("/products")]
-pub async fn list(pool: Data<DBPool>, query: web::Query<Pagination>) -> HttpResponse {
-    let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
+fn build_cache_key(cat: i64, limit: i64, offset: i64, query: &str, ignore_digital: bool) -> String {
+    format!(
+        "products:cat_{}:limit_{}:offset_{}:q_{}:dig_{}",
+        cat, limit, offset, query, ignore_digital
+    )
+}
 
+#[get("/products")]
+pub async fn list(
+    pool: Data<DBPool>,
+    redis_pool: Data<RedisPool>,
+    query: web::Query<Pagination>
+) -> HttpResponse {
     let limit = query.limit.unwrap_or(100);
     let offset = query.offset.unwrap_or(0);
     let cat = query.cat;
-    let text_query = format!("%{}%", query.query.clone().unwrap_or_default());
+    let text_query = query.query.clone().unwrap_or_default();
     let ignore_digital = query.ignore_digital.unwrap_or(false);
+
+    let cache_key = build_cache_key(cat, limit, offset, &text_query, ignore_digital);
+    // Пробуем получить данные из кеша
+    // Пытаемся получить данные из кеша
+    if let Ok(mut redis_conn) = redis_pool.get().await {
+        if let Ok(Some(cached)) = redis_conn.get_json::<ProductListResponse>(&cache_key).await {
+            return HttpResponse::Ok().json(cached);
+        }
+    }
+
+     // Если в кеше нет, выполняем запрос к БД
+    let conn = &mut match pool.get() {
+        Ok(conn) => conn,
+        Err(e) => {
+            eprintln!("Database connection error: {}", e);
+            return HttpResponse::InternalServerError().finish();
+        }
+    };
+
+    let db_text_query = format!("%{}%", text_query);
 
     // === Основной SELECT ===
     let mut base_query = String::from(r#"
@@ -77,7 +106,7 @@ pub async fn list(pool: Data<DBPool>, query: web::Query<Pagination>) -> HttpResp
     let results = diesel::sql_query(base_query)
         .bind::<diesel::sql_types::BigInt, _>(limit)
         .bind::<diesel::sql_types::BigInt, _>(offset)
-        .bind::<diesel::sql_types::Text, _>(text_query.clone())
+        .bind::<diesel::sql_types::Text, _>(db_text_query.clone())
         .bind::<diesel::sql_types::BigInt, _>(cat)
         .load::<ProductListItem>(conn);
 
@@ -95,7 +124,7 @@ pub async fn list(pool: Data<DBPool>, query: web::Query<Pagination>) -> HttpResp
 
     let count_result = diesel::sql_query(count_query)
         .bind::<diesel::sql_types::BigInt, _>(cat)
-        .bind::<diesel::sql_types::Text, _>(text_query.clone())
+        .bind::<diesel::sql_types::Text, _>(db_text_query)
         .load::<CountResult>(conn);
 
     match (results, count_result) {
@@ -104,6 +133,15 @@ pub async fn list(pool: Data<DBPool>, query: web::Query<Pagination>) -> HttpResp
                 items,
                 total_count: count.get(0).map(|c| c.total).unwrap_or(0),
             };
+
+            // Кешируем результат
+            if let Ok(mut redis_conn) = redis_pool.get().await {
+                let ttl = if offset == 0 { 300 } else { 60 }; // 5 мин для первой страницы, 1 мин для остальных
+                if let Err(e) = redis_conn.set_json(&cache_key, &response, ttl).await {
+                    eprintln!("Failed to cache response: {}", e);
+                }
+            }
+
             HttpResponse::Ok().json(response)
         }
         (Err(err), _) | (_, Err(err)) => {
