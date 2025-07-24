@@ -7,7 +7,6 @@ use crate::pagination::Pagination;
 use actix_web::http::header;
 use crate::auth::verify_jwt;
 use crate::{DBPool, redis::{RedisPool, RedisCacheExt}};
-use chrono::NaiveDate;
 
 #[derive(QueryableByName, Serialize)]
 pub struct Product {
@@ -15,8 +14,8 @@ pub struct Product {
     pub id: i32,
     #[diesel(sql_type = sql_types::Text)]
     pub cover: String,
-    #[diesel(sql_type = sql_types::Text)]
-    pub first_release_date: String,
+    #[diesel(sql_type = sql_types::Nullable<sql_types::Integer>)]
+    pub first_release_date: Option<i32>,
     #[diesel(sql_type = sql_types::Text)]
     pub name: String,
 }
@@ -25,13 +24,10 @@ pub struct Product {
 pub struct ProductListItem {
     #[diesel(sql_type = sql_types::Integer)]
     pub id: i32,
-
     #[diesel(sql_type = sql_types::Text)]
     pub name: String,
-
     #[diesel(sql_type = sql_types::Nullable<sql_types::Integer>)]
     pub first_release_date: Option<i32>,
-
     #[diesel(sql_type = sql_types::Nullable<sql_types::Text>)]
     pub image_url: Option<String>,
 }
@@ -68,26 +64,16 @@ pub async fn list(
     let ignore_digital = query.ignore_digital.unwrap_or(false);
 
     let cache_key = build_cache_key(cat, limit, offset, &text_query, ignore_digital);
-    // Пробуем получить данные из кеша
-    // Пытаемся получить данные из кеша
+    
     if let Ok(mut redis_conn) = redis_pool.get().await {
         if let Ok(Some(cached)) = redis_conn.get_json::<ProductListResponse>(&cache_key).await {
             return HttpResponse::Ok().json(cached);
         }
     }
 
-     // Если в кеше нет, выполняем запрос к БД
-    let conn = &mut match pool.get() {
-        Ok(conn) => conn,
-        Err(e) => {
-            eprintln!("Database connection error: {}", e);
-            return HttpResponse::InternalServerError().finish();
-        }
-    };
-
+    let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
     let db_text_query = format!("%{}%", text_query);
 
-    // === Основной SELECT ===
     let mut base_query = String::from(r#"
         SELECT 
             prod.id AS id,
@@ -107,13 +93,12 @@ pub async fn list(
     base_query.push_str(" ORDER BY prod.name ASC LIMIT $1 OFFSET $2");
 
     let results = diesel::sql_query(base_query)
-        .bind::<diesel::sql_types::BigInt, _>(limit)
-        .bind::<diesel::sql_types::BigInt, _>(offset)
-        .bind::<diesel::sql_types::Text, _>(db_text_query.clone())
-        .bind::<diesel::sql_types::BigInt, _>(cat)
+        .bind::<sql_types::BigInt, _>(limit)
+        .bind::<sql_types::BigInt, _>(offset)
+        .bind::<sql_types::Text, _>(db_text_query.clone())
+        .bind::<sql_types::BigInt, _>(cat)
         .load::<ProductListItem>(conn);
 
-    // === COUNT SELECT ===
     let mut count_query = String::from(r#"
         SELECT COUNT(*) as total
         FROM product_platforms AS pp
@@ -126,8 +111,8 @@ pub async fn list(
     }
 
     let count_result = diesel::sql_query(count_query)
-        .bind::<diesel::sql_types::BigInt, _>(cat)
-        .bind::<diesel::sql_types::Text, _>(db_text_query)
+        .bind::<sql_types::BigInt, _>(cat)
+        .bind::<sql_types::Text, _>(db_text_query)
         .load::<CountResult>(conn);
 
     match (results, count_result) {
@@ -137,12 +122,9 @@ pub async fn list(
                 total_count: count.get(0).map(|c| c.total).unwrap_or(0),
             };
 
-            // Кешируем результат
             if let Ok(mut redis_conn) = redis_pool.get().await {
-                let ttl = if offset == 0 { 300 } else { 60 }; // 5 мин для первой страницы, 1 мин для остальных
-                if let Err(e) = redis_conn.set_json(&cache_key, &response, ttl).await {
-                    eprintln!("Failed to cache response: {}", e);
-                }
+                let ttl = if offset == 0 { 300 } else { 60 };
+                let _ = redis_conn.set_json(&cache_key, &response, ttl).await;
             }
 
             HttpResponse::Ok().json(response)
@@ -156,24 +138,24 @@ pub async fn list(
 
 #[derive(Debug, Serialize, Deserialize, QueryableByName)]
 struct ProductProperties {
-    #[diesel(sql_type = sql_types::Integer)]  // Исправлено с BigInt
-    id: i32,  // Исправлено с i64
+    #[diesel(sql_type = sql_types::Integer)]
+    id: i32,
     #[diesel(sql_type = sql_types::Text)]
     name: String,
     #[diesel(sql_type = sql_types::Nullable<sql_types::Text>)]
     summary: Option<String>,
-    #[diesel(sql_type = sql_types::Nullable<sql_types::Date>)]
-    first_release_date: Option<NaiveDate>,
+    #[diesel(sql_type = sql_types::Nullable<sql_types::Integer>)]
+    first_release_date: Option<i32>,
     #[diesel(sql_type = sql_types::Nullable<sql_types::Text>)]
     image_url: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize, QueryableByName)]
 struct ReleaseInfo {
-    #[diesel(sql_type = sql_types::Nullable<sql_types::Date>)]
-    release_date: Option<NaiveDate>,
-    #[diesel(sql_type = sql_types::Integer)]  // Исправлено с BigInt
-    release_id: i32,  // Исправлено с i64
+    #[diesel(sql_type = sql_types::Nullable<sql_types::Integer>)]
+    release_date: Option<i32>,
+    #[diesel(sql_type = sql_types::Integer)]
+    release_id: i32,
     #[diesel(sql_type = sql_types::Text)]
     release_status: String,
     #[diesel(sql_type = sql_types::Bool)]
@@ -184,8 +166,8 @@ struct ReleaseInfo {
     release_region: String,
     #[diesel(sql_type = sql_types::Text)]
     platform_name: String,
-    #[diesel(sql_type = sql_types::Integer)]  // Исправлено с BigInt
-    platform_id: i32,  // Исправлено с i64
+    #[diesel(sql_type = sql_types::Integer)]
+    platform_id: i32,
 }
 
 #[derive(Debug, Serialize, QueryableByName)]
@@ -217,8 +199,8 @@ struct CachedProduct {
 
 #[derive(QueryableByName)]
 struct UserBid {
-    #[diesel(sql_type = sql_types::Integer)]  // Исправлено с BigInt
-    release_id: i32,  // Исправлено с i64
+    #[diesel(sql_type = sql_types::Integer)]
+    release_id: i32,
     #[diesel(sql_type = sql_types::Text)]
     user_login: String,
 }
@@ -227,18 +209,12 @@ struct UserBid {
 pub async fn get(
     pool: Data<DBPool>,
     redis_pool: Data<RedisPool>,
-    path: Path<(i32,)>,  // Исправлено с i64
+    path: Path<(i32,)>,
     req: HttpRequest,
 ) -> HttpResponse {
     let (product_id,) = path.into_inner();
     
-    let conn = &mut match pool.get() {
-        Ok(conn) => conn,
-        Err(e) => {
-            eprintln!("Database connection error: {}", e);
-            return HttpResponse::InternalServerError().finish();
-        }
-    };
+    let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
 
     let user_login = req
         .headers()
@@ -279,9 +255,9 @@ pub async fn get(
 
 fn get_full_product_data(
     conn: &mut PgConnection,
-    product_id: i32,  // Исправлено с i64
+    product_id: i32,
     user_login: Option<&str>,
-) -> Result<(CachedProduct, Vec<(i32, Vec<String>)>), diesel::result::Error> {  // Исправлено с i64
+) -> Result<(CachedProduct, Vec<(i32, Vec<String>)>), diesel::result::Error> {
     let product = sql_query(
         r#"SELECT 
             prod.id AS id,
@@ -293,13 +269,13 @@ fn get_full_product_data(
         LEFT JOIN covers AS cov ON prod.cover_id = cov.id
         WHERE prod.id = $1"#,
     )
-    .bind::<sql_types::Integer, _>(product_id)  // Исправлено с BigInt
+    .bind::<sql_types::Integer, _>(product_id)
     .get_result::<ProductProperties>(conn)?;
 
     let screenshots = sql_query(
         "SELECT image_url FROM screenshots WHERE game = $1",
     )
-    .bind::<sql_types::Integer, _>(product_id)  // Исправлено с BigInt
+    .bind::<sql_types::Integer, _>(product_id)
     .load::<ScreenshotUrl>(conn)?
     .into_iter()
     .map(|s| s.image_url)
@@ -321,7 +297,7 @@ fn get_full_product_data(
         WHERE r.product_id = $1 AND p.active = true
         ORDER BY p.name"#,
     )
-    .bind::<sql_types::Integer, _>(product_id)  // Исправлено с BigInt
+    .bind::<sql_types::Integer, _>(product_id)
     .load::<ReleaseInfo>(conn)?;
 
     let bids = get_fresh_bids(conn, product_id, user_login)?;
@@ -331,16 +307,16 @@ fn get_full_product_data(
 
 fn get_fresh_bids(
     conn: &mut PgConnection,
-    product_id: i32,  // Исправлено с i64
+    product_id: i32,
     user_login: Option<&str>,
-) -> Result<Vec<(i32, Vec<String>)>, diesel::result::Error> {  // Исправлено с i64
+) -> Result<Vec<(i32, Vec<String>)>, diesel::result::Error> {
     let bids = sql_query(
         "SELECT release_id, user_login FROM users_have_bids
          WHERE release_id IN (
              SELECT id FROM releases WHERE product_id = $1
          )",
     )
-    .bind::<sql_types::Integer, _>(product_id)  // Исправлено с BigInt
+    .bind::<sql_types::Integer, _>(product_id)
     .load::<UserBid>(conn)?;
 
     let mut filtered_bids = bids;
@@ -360,7 +336,7 @@ fn get_fresh_bids(
 
 fn combine_response(
     cached: CachedProduct,
-    bids: Vec<(i32, Vec<String>)>,  // Исправлено с i64
+    bids: Vec<(i32, Vec<String>)>,
 ) -> ProductResponse {
     let bids_map: std::collections::HashMap<_, _> = bids.into_iter().collect();
     
