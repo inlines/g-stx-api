@@ -7,6 +7,7 @@ use crate::pagination::Pagination;
 use actix_web::http::header;
 use crate::auth::verify_jwt;
 use crate::{DBPool, redis::{RedisPool, RedisCacheExt}};
+use serde_json::json;
 
 #[derive(QueryableByName, Serialize)]
 pub struct Product {
@@ -136,221 +137,99 @@ pub async fn list(
     }
 }
 
-#[derive(Debug, Serialize, Deserialize, QueryableByName)]
-struct ProductProperties {
+#[derive(Debug, Serialize, QueryableByName)]
+pub struct ProductProperties {
     #[diesel(sql_type = sql_types::Integer)]
-    id: i32,
+    pub id: i32,
     #[diesel(sql_type = sql_types::Text)]
-    name: String,
-    #[diesel(sql_type = sql_types::Nullable<sql_types::Text>)]
-    summary: Option<String>,
+    pub name: String,
+    #[diesel(sql_type = sql_types::Text)]
+    pub summary: String,
     #[diesel(sql_type = sql_types::Nullable<sql_types::Integer>)]
-    first_release_date: Option<i32>,
-    #[diesel(sql_type = sql_types::Nullable<sql_types::Text>)]
-    image_url: Option<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize, QueryableByName)]
-struct ReleaseInfo {
-    #[diesel(sql_type = sql_types::Nullable<sql_types::Integer>)]
-    release_date: Option<i32>,
-    #[diesel(sql_type = sql_types::Integer)]
-    release_id: i32,
+    pub first_release_date: Option<i32>,
     #[diesel(sql_type = sql_types::Text)]
-    release_status: String,
-    #[diesel(sql_type = sql_types::Bool)]
-    digital_only: bool,
-    #[diesel(sql_type = sql_types::Nullable<sql_types::Text>)]
-    serial: Option<String>,
-    #[diesel(sql_type = sql_types::Text)]
-    release_region: String,
-    #[diesel(sql_type = sql_types::Text)]
-    platform_name: String,
-    #[diesel(sql_type = sql_types::Integer)]
-    platform_id: i32,
+    pub image_url: String,
 }
 
 #[derive(Debug, Serialize, QueryableByName)]
-struct ScreenshotUrl {
-    #[diesel(sql_type = sql_types::Text)]
-    image_url: String,
-}
-
-#[derive(Debug, Serialize)]
-struct ReleaseInfoWithBids {
-    #[serde(flatten)]
-    release: ReleaseInfo,
-    bid_user_logins: Vec<String>,
+pub struct ReleaseInfo {
+    #[diesel(sql_type = sql_types::Integer)]
+    pub id: i32,
+    #[diesel(sql_type = sql_types::Nullable<sql_types::Integer>)]
+    pub release_date: Option<i32>,
+    #[diesel(sql_type = sql_types::Integer)]
+    pub product_id: i32,
+    #[diesel(sql_type = sql_types::Integer)]
+    pub platform: i32,
+    #[diesel(sql_type = sql_types::Nullable<sql_types::Integer>)]
+    pub release_status: Option<i32>,
+    #[diesel(sql_type = sql_types::Nullable<sql_types::Integer>)]
+    pub release_region: Option<i32>,
+    #[diesel(sql_type = sql_types::Bool)]
+    pub digital_only: bool,
+    #[diesel(sql_type = sql_types::Nullable<sql_types::Array<sql_types::Text>>)]
+    pub serial: Option<Vec<String>>,
 }
 
 #[derive(Debug, Serialize)]
 struct ProductResponse {
     product: ProductProperties,
-    releases: Vec<ReleaseInfoWithBids>,
-    screenshots: Vec<String>,
-}
-
-#[derive(Debug, Serialize, Deserialize)]
-struct CachedProduct {
-    product: ProductProperties,
     releases: Vec<ReleaseInfo>,
-    screenshots: Vec<String>,
-}
-
-#[derive(QueryableByName)]
-struct UserBid {
-    #[diesel(sql_type = sql_types::Integer)]
-    release_id: i32,
-    #[diesel(sql_type = sql_types::Text)]
-    user_login: String,
 }
 
 #[get("/products/{id}")]
 pub async fn get(
     pool: Data<DBPool>,
-    redis_pool: Data<RedisPool>,
     path: Path<(i32,)>,
-    req: HttpRequest,
 ) -> HttpResponse {
     let (product_id,) = path.into_inner();
-    
-    let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
+    let conn = &mut pool.get().expect("Failed to get DB connection");
 
-    let user_login = req
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|h| h.to_str().ok())
-        .and_then(|h| h.strip_prefix("Bearer "))
-        .and_then(verify_jwt)
-        .map(|claims| claims.sub);
-
-    let cache_key = format!("product:{}", product_id);
-    if let Ok(mut redis_conn) = redis_pool.get().await {
-        if let Ok(Some(cached)) = redis_conn.get_json::<CachedProduct>(&cache_key).await {
-            match get_fresh_bids(conn, product_id, user_login.as_deref()) {
-                Ok(bids) => {
-                    let response = combine_response(cached, bids);
-                    return HttpResponse::Ok().json(response);
-                }
-                Err(e) => eprintln!("Failed to get fresh bids: {}", e),
-            }
-        }
-    }
-
-    match get_full_product_data(conn, product_id, user_login.as_deref()) {
-        Ok((cached_product, bids)) => {
-            if let Ok(mut redis_conn) = redis_pool.get().await {
-                let _ = redis_conn.set_json(&cache_key, &cached_product, 3600).await;
-            }
-
-            let response = combine_response(cached_product, bids);
-            HttpResponse::Ok().json(response)
-        }
-        Err(e) => {
-            eprintln!("Database error: {}", e);
-            HttpResponse::InternalServerError().finish()
-        }
-    }
-}
-
-fn get_full_product_data(
-    conn: &mut PgConnection,
-    product_id: i32,
-    user_login: Option<&str>,
-) -> Result<(CachedProduct, Vec<(i32, Vec<String>)>), diesel::result::Error> {
-    let product = sql_query(
+    // Запрос продукта
+    let product = match sql_query(
         r#"SELECT 
-            prod.id AS id,
-            prod.name AS name,
-            prod.summary AS summary,
-            prod.first_release_date AS first_release_date,
-            '//89.104.66.193/static/covers-full/' || cov.id ||'.jpg' AS image_url
-        FROM products AS prod
-        LEFT JOIN covers AS cov ON prod.cover_id = cov.id
-        WHERE prod.id = $1"#,
+            p.id,
+            p.name,
+            p.summary,
+            p.first_release_date,
+            p.image_url
+        FROM products p
+        WHERE p.id = $1"#
     )
     .bind::<sql_types::Integer, _>(product_id)
-    .get_result::<ProductProperties>(conn)?;
-
-    let screenshots = sql_query(
-        "SELECT image_url FROM screenshots WHERE game = $1",
-    )
-    .bind::<sql_types::Integer, _>(product_id)
-    .load::<ScreenshotUrl>(conn)?
-    .into_iter()
-    .map(|s| s.image_url)
-    .collect();
-
-    let releases = sql_query(
-        r#"SELECT
-            r.release_date AS release_date,
-            r.id AS release_id,
-            r.release_status AS release_status,
-            r.digital_only AS digital_only,
-            r.serial AS serial,
-            reg.name AS release_region,
-            p.name AS platform_name,
-            p.id AS platform_id
-        FROM releases AS r
-        LEFT JOIN platforms AS p ON r.platform = p.id
-        INNER JOIN regions AS reg ON reg.id = r.release_region
-        WHERE r.product_id = $1 AND p.active = true
-        ORDER BY p.name"#,
-    )
-    .bind::<sql_types::Integer, _>(product_id)
-    .load::<ReleaseInfo>(conn)?;
-
-    let bids = get_fresh_bids(conn, product_id, user_login)?;
-
-    Ok((CachedProduct { product, releases, screenshots }, bids))
-}
-
-fn get_fresh_bids(
-    conn: &mut PgConnection,
-    product_id: i32,
-    user_login: Option<&str>,
-) -> Result<Vec<(i32, Vec<String>)>, diesel::result::Error> {
-    let bids = sql_query(
-        "SELECT release_id, user_login FROM users_have_bids
-         WHERE release_id IN (
-             SELECT id FROM releases WHERE product_id = $1
-         )",
-    )
-    .bind::<sql_types::Integer, _>(product_id)
-    .load::<UserBid>(conn)?;
-
-    let mut filtered_bids = bids;
-    if let Some(login) = user_login {
-        filtered_bids.retain(|bid| bid.user_login != login);
-    }
-
-    let mut grouped = std::collections::HashMap::new();
-    for bid in filtered_bids {
-        grouped.entry(bid.release_id)
-            .or_insert_with(Vec::new)
-            .push(bid.user_login);
-    }
-
-    Ok(grouped.into_iter().collect())
-}
-
-fn combine_response(
-    cached: CachedProduct,
-    bids: Vec<(i32, Vec<String>)>,
-) -> ProductResponse {
-    let bids_map: std::collections::HashMap<_, _> = bids.into_iter().collect();
-    
-    let releases = cached.releases.into_iter().map(|release| {
-        let bid_user_logins = bids_map.get(&release.release_id).cloned().unwrap_or_default();
-        ReleaseInfoWithBids {
-            release,
-            bid_user_logins,
+    .get_result::<ProductProperties>(conn) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Product query failed: {}", e);
+            return HttpResponse::NotFound().finish();
         }
-    }).collect();
+    };
 
-    ProductResponse {
-        product: cached.product,
-        releases,
-        screenshots: cached.screenshots,
-    }
+    // Запрос релизов
+    let releases = match sql_query(
+        r#"SELECT
+            r.id,
+            r.release_date,
+            r.product_id,
+            r.platform,
+            r.release_status,
+            r.release_region,
+            r.digital_only,
+            r.serial
+        FROM releases r
+        WHERE r.product_id = $1"#
+    )
+    .bind::<sql_types::Integer, _>(product_id)
+    .load::<ReleaseInfo>(conn) {
+        Ok(r) => r,
+        Err(e) => {
+            eprintln!("Releases query failed: {}", e);
+            Vec::new()
+        }
+    };
+
+    HttpResponse::Ok().json(ProductResponse {
+        product,
+        releases
+    })
 }
