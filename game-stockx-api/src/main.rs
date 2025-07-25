@@ -1,5 +1,9 @@
 #[macro_use]
 extern crate actix_web;
+#[macro_use]
+extern crate lazy_static;
+#[macro_use]
+extern crate prometheus;
 
 use std::{env, io};
 use dotenv::dotenv;
@@ -25,9 +29,12 @@ mod collection;
 mod platforms;
 mod chat;
 mod redis;
+mod metrics;
+mod metrics_middleware;
 
 pub type DBPool = Pool<ConnectionManager<PgConnection>>;
 pub type DBPooledConnection = PooledConnection<ConnectionManager<PgConnection>>;
+use metrics_middleware::MetricsMiddleware;
 
 
 #[actix_web::main]
@@ -63,6 +70,7 @@ async fn main() -> io::Result<()> {
     // Запуск HTTP-сервера
     HttpServer::new(move || {
         App::new()
+            .wrap(MetricsMiddleware)
             .wrap(prometheus.clone())
             .app_data(web::Data::new(redis_pool.clone()))
             .app_data(web::Data::new(pool.clone()))  // Передаем пул базы данных

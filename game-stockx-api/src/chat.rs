@@ -15,6 +15,8 @@ use crate::{DBPool};
 use actix_rt::task::spawn_blocking;
 use chrono::{DateTime, Utc};
 
+use crate::metrics::{WS_CONNECTIONS, CHAT_MESSAGES_SENT};
+
 #[derive(Message, Serialize, Deserialize, Debug, Clone)]
 #[rtype(result = "()")]
 pub struct ClientMessage {
@@ -48,6 +50,7 @@ pub struct ChatServer {
 
 impl ChatServer {
     pub fn new(db_pool: r2d2::Pool<ConnectionManager<PgConnection>>) -> ChatServer {
+        WS_CONNECTIONS.set(0);
         ChatServer {
             sessions: HashMap::new(),
             db_pool,
@@ -63,6 +66,7 @@ impl Handler<ChatCommand> for ChatServer {
     type Result = ();
 
     fn handle(&mut self, msg: ChatCommand, _: &mut Context<Self>) -> Self::Result {
+        CHAT_MESSAGES_SENT.inc();
         match msg {
             ChatCommand::Connect { login, addr } => {
                 self.sessions.insert(login, addr);
