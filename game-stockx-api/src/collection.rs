@@ -290,7 +290,7 @@ async fn get_wishlist(pool: web::Data<DBPool>, req: HttpRequest, query: web::Que
             prod.name AS product_name,
             '//89.104.66.193/static/covers-thumb/' || cover.id ||'.jpg' AS image_url,
             reg.name AS region_name,
-            '' AS serial
+            ARRAY[]::text[] AS serial
         FROM public.users_have_wishes AS uhw
         INNER JOIN releases AS r ON uhw.release_id = r.id
         INNER JOIN platforms AS p ON r.platform = p.id
