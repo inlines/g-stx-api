@@ -26,6 +26,7 @@ mod pagination;
 mod register;
 mod auth;
 mod collection;
+mod collectors;
 mod platforms;
 mod chat;
 mod redis;
@@ -50,12 +51,12 @@ async fn main() -> io::Result<()> {
         .expect("Failed to create pool");
 
     // Инициализация Redis
-    let redis_url = env::var("REDIS_URL")
-        .unwrap_or_else(|_| "redis://redis:6379".to_string());
+    // let redis_url = env::var("REDIS_URL")
+    //     .unwrap_or_else(|_| "redis://redis:6379".to_string());
     
-    let redis_pool = create_redis_pool(&redis_url)
-        .await
-        .expect("Failed to create Redis pool");
+    // let redis_pool = create_redis_pool(&redis_url)
+    //     .await
+    //     .expect("Failed to create Redis pool");
 
     // Инициализация Prometheus
     let prometheus = PrometheusMetricsBuilder::new("api")
@@ -72,7 +73,7 @@ async fn main() -> io::Result<()> {
         App::new()
             .wrap(MetricsMiddleware)
             .wrap(prometheus.clone())
-            .app_data(web::Data::new(redis_pool.clone()))
+            //.app_data(web::Data::new(redis_pool.clone()))
             .app_data(web::Data::new(pool.clone()))  // Передаем пул базы данных
             .app_data(chat_server_data.clone())
             .wrap(middleware::Logger::default())
@@ -94,10 +95,12 @@ async fn main() -> io::Result<()> {
                     .service(collection::add_wish)
                     .service(collection::remove_wish)
                     .service(collection::get_collection)
+                    .service(collection::get_collection_by_login)
                     .service(collection::get_wishlist)
                     .service(collection::get_collection_stats)
                     .service(collection::add_bid)
                     .service(collection::remove_bid)
+                    .service(collectors::get_collectors)
                     .service(platforms::get_platforms)
                     .service(chat::get_my_messages)
                     .service(chat::get_my_dialogs)
