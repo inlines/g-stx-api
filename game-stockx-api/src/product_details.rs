@@ -80,6 +80,7 @@ fn build_bids_cache_key(product_id: i32) -> String {
 #[get("/products/{id}")]
 pub async fn get(
     pool: Data<DBPool>,
+    redis_pool: Data<RedisPool>,
     path: Path<i32>,
     req: HttpRequest,
 ) -> HttpResponse {
@@ -97,7 +98,7 @@ pub async fn get(
             }
         });
 
-    let basic_info = match get_product_basic_info(&pool, product_id).await {
+    let basic_info = match get_product_basic_info(&pool, &redis_pool, product_id).await {
         Ok(info) => info,
         Err(e) => {
             eprintln!("Error getting product info: {}", e);
@@ -105,7 +106,7 @@ pub async fn get(
         }
     };
 
-    let (mut releases, screenshots) = match get_product_releases(&pool, product_id).await {
+    let (mut releases, screenshots) = match get_product_releases(&pool, &redis_pool, product_id).await {
         Ok(data) => data,
         Err(e) => {
             eprintln!("Error getting releases: {}", e);
@@ -128,9 +129,16 @@ pub async fn get(
 
 async fn get_product_basic_info(
     pool: &Data<DBPool>,
+    redis_pool: &Data<RedisPool>,
     product_id: i32,
 ) -> Result<ProductProperties, String> {
     let cache_key = build_product_cache_key(product_id);
+
+    if let Ok(mut redis_conn) = redis_pool.get().await {
+        if let Ok(Some(cached)) = redis_conn.get_json::<ProductProperties>(&cache_key).await {
+            return Ok(cached);
+        }
+    }
 
     let conn = &mut pool.get().map_err(|e| e.to_string())?;
 
@@ -151,15 +159,25 @@ async fn get_product_basic_info(
         .get_result::<ProductProperties>(conn)
         .map_err(|e| e.to_string())?;
 
+    if let Ok(mut redis_conn) = redis_pool.get().await {
+        let _ = redis_conn.set_json(&cache_key, &product_info, 86400).await;
+    }
+
     Ok(product_info)
 }
 
 async fn get_product_releases(
     pool: &Data<DBPool>,
+    redis_pool: &Data<RedisPool>,
     product_id: i32,
 ) -> Result<(Vec<ProductReleaseInfo>, Vec<String>), String> {
     let cache_key = build_bids_cache_key(product_id);
     
+    if let Ok(mut redis_conn) = redis_pool.get().await {
+        if let Ok(Some(cached)) = redis_conn.get_json::<(Vec<ProductReleaseInfo>, Vec<String>)>(&cache_key).await {
+            return Ok(cached);
+        }
+    }
 
     let conn = &mut pool.get().map_err(|e| e.to_string())?;
 
@@ -204,6 +222,11 @@ async fn get_product_releases(
         .into_iter()
         .map(|s| s.image_url)
         .collect();
+
+    if let Ok(mut redis_conn) = redis_pool.get().await {
+        let cache_data = (releases.clone(), screenshots.clone());
+        let _ = redis_conn.set_json(&cache_key, &cache_data, 60).await;
+    }
 
     Ok((releases, screenshots))
 }
