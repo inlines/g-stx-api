@@ -52,7 +52,6 @@ fn build_cache_key(cat: i64, limit: i64, offset: i64, query: &str, ignore_digita
 #[get("/products")]
 pub async fn list(
     pool: Data<DBPool>,
-    redis_pool: Data<RedisPool>,
     query: web::Query<Pagination>
 ) -> HttpResponse {
     let limit = query.limit.unwrap_or(100);
@@ -62,12 +61,7 @@ pub async fn list(
     let ignore_digital = query.ignore_digital.unwrap_or(false);
 
     let cache_key = build_cache_key(cat, limit, offset, &text_query, ignore_digital);
-    
-    if let Ok(mut redis_conn) = redis_pool.get().await {
-        if let Ok(Some(cached)) = redis_conn.get_json::<ProductListResponse>(&cache_key).await {
-            return HttpResponse::Ok().json(cached);
-        }
-    }
+
 
     let conn = &mut match pool.get() {
         Ok(conn) => conn,
@@ -126,14 +120,6 @@ pub async fn list(
                 items,
                 total_count: count.get(0).map(|c| c.total).unwrap_or(0),
             };
-
-            if let Ok(mut redis_conn) = redis_pool.get().await {
-                let ttl = if offset == 0 { 300 } else { 60 };
-                if let Err(e) = redis_conn.set_json(&cache_key, &response, ttl).await {
-                    eprintln!("Failed to cache response: {}", e);
-                }
-            }
-
             HttpResponse::Ok().json(response)
         }
         (Err(err), _) | (_, Err(err)) => {

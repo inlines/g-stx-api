@@ -45,17 +45,16 @@ async fn load_from_db(pool: &Data<DBPool>) -> Result<Vec<PlatformItem>, HttpResp
 #[get("/platforms")]
 pub async fn get_platforms(
     pool: Data<DBPool>,
-    redis_pool: Data<RedisPool>,
 ) -> HttpResponse {
     const CACHE_KEY: &str = "platforms:active_list";
     const CACHE_TTL_SEC: usize = 86400;
 
     // 1. Try to get from cache
-    if let Ok(mut conn) = redis_pool.get().await {
-        if let Ok(Some(cached)) = conn.get_json::<Vec<PlatformItem>>(CACHE_KEY).await {
-            return HttpResponse::Ok().json(cached);
-        }
-    }
+    // if let Ok(mut conn) = redis_pool.get().await {
+    //     if let Ok(Some(cached)) = conn.get_json::<Vec<PlatformItem>>(CACHE_KEY).await {
+    //         return HttpResponse::Ok().json(cached);
+    //     }
+    // }
 
     // 2. Load from DB
     let items = match load_from_db(&pool).await {
@@ -64,9 +63,9 @@ pub async fn get_platforms(
     };
 
     // 3. Save to cache (ignore errors)
-    if let Ok(mut conn) = redis_pool.get().await {
-        let _ = conn.set_json(CACHE_KEY, &items, CACHE_TTL_SEC).await;
-    }
+    // if let Ok(mut conn) = redis_pool.get().await {
+    //     let _ = conn.set_json(CACHE_KEY, &items, CACHE_TTL_SEC).await;
+    // }
 
     HttpResponse::Ok().json(items)
 }
