@@ -51,12 +51,12 @@ async fn main() -> io::Result<()> {
         .expect("Failed to create pool");
 
     // Инициализация Redis
-    // let redis_url = env::var("REDIS_URL")
-    //     .unwrap_or_else(|_| "redis://redis:6379".to_string());
+    let redis_url = env::var("REDIS_URL")
+        .unwrap_or_else(|_| "redis://redis:6379".to_string());
     
-    // let redis_pool = create_redis_pool(&redis_url)
-    //     .await
-    //     .expect("Failed to create Redis pool");
+    let redis_pool = create_redis_pool(&redis_url)
+        .await
+        .expect("Failed to create Redis pool");
 
     // Инициализация Prometheus
     let prometheus = PrometheusMetricsBuilder::new("api")
@@ -73,7 +73,7 @@ async fn main() -> io::Result<()> {
         App::new()
             .wrap(MetricsMiddleware)
             .wrap(prometheus.clone())
-            //.app_data(web::Data::new(redis_pool.clone()))
+            .app_data(web::Data::new(redis_pool.clone()))
             .app_data(web::Data::new(pool.clone()))  // Передаем пул базы данных
             .app_data(chat_server_data.clone())
             .wrap(middleware::Logger::default())
