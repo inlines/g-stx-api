@@ -26,6 +26,7 @@ mod pagination;
 mod register;
 mod auth;
 mod collection;
+mod collectors;
 mod platforms;
 mod chat;
 mod redis;
@@ -94,10 +95,12 @@ async fn main() -> io::Result<()> {
                     .service(collection::add_wish)
                     .service(collection::remove_wish)
                     .service(collection::get_collection)
+                    .service(collection::get_collection_by_login)
                     .service(collection::get_wishlist)
                     .service(collection::get_collection_stats)
                     .service(collection::add_bid)
                     .service(collection::remove_bid)
+                    .service(collectors::get_collectors)
                     .service(platforms::get_platforms)
                     .service(chat::get_my_messages)
                     .service(chat::get_my_dialogs)

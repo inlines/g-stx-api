@@ -1,4 +1,5 @@
 use actix_web::{post, HttpRequest, HttpResponse, web};
+use actix_web::web::{Path};
 use crate::constants::{CONNECTION_POOL_ERROR};
 use crate::{DBPool};
 use crate::auth::{verify_jwt};
@@ -253,6 +254,68 @@ async fn get_collection(pool: web::Data<DBPool>, req: HttpRequest, query: web::Q
         }
     }
 }
+
+
+#[get("/collection-by-login/{login}")]
+async fn get_collection_by_login(
+    pool: web::Data<DBPool>, 
+    path: Path<String>, 
+    query: web::Query<Pagination>
+) -> HttpResponse {
+    let login = path.into_inner();
+    
+    if login.is_empty() {
+        return HttpResponse::BadRequest().json("Login cannot be empty");
+    }
+    
+    // Изменяем на mut conn
+    let mut conn = match pool.get() {
+        Ok(conn) => conn,
+        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
+    };
+    
+    //let cat = query.cat;
+    let limit = query.limit.unwrap_or(100).min(1000);
+    let offset = query.offset.unwrap_or(0);
+    
+    let query_text = r#"
+        SELECT 
+            uhr.release_id,
+            r.release_date,
+            r.serial,
+            p.name as platform_name,
+            prod.id as product_id,
+            prod.name AS product_name,
+            '//89.104.66.193/static/covers-thumb/' || cover.id ||'.jpg' AS image_url,
+            reg.name AS region_name
+        FROM public.users_have_releases AS uhr
+        INNER JOIN releases AS r ON uhr.release_id = r.id
+        INNER JOIN platforms AS p ON r.platform = p.id
+        INNER JOIN products AS prod ON r.product_id = prod.id
+        INNER JOIN covers AS cover ON cover.id = prod.cover_id
+        INNER JOIN regions as reg on reg.id = r.release_region 
+        WHERE uhr.user_login = $1
+        ORDER BY prod.name
+        LIMIT $2 OFFSET $3
+    "#;
+
+    let result = diesel::sql_query(query_text)
+        .bind::<Text, _>(&login)
+        .bind::<diesel::sql_types::BigInt, _>(limit)
+        .bind::<diesel::sql_types::BigInt, _>(offset)
+        .load::<CollectionItem>(&mut conn); // Используем &mut conn
+
+    match result {
+        Ok(items) => {
+            HttpResponse::Ok().json(items)
+        }
+        Err(err) => {
+            eprintln!("Query error: {:?}", err);
+            HttpResponse::InternalServerError().body(format!("DB error: {:?}", err))
+        }
+    }
+}
+
 
 #[get("/wishlist")]
 async fn get_wishlist(pool: web::Data<DBPool>, req: HttpRequest, query: web::Query<Pagination>) -> HttpResponse {
