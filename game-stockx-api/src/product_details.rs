@@ -133,7 +133,7 @@ async fn get_product_basic_info(
     product_id: i32,
 ) -> Result<ProductProperties, String> {
     let cache_key = build_product_cache_key(product_id);
-    
+
     if let Ok(mut redis_conn) = redis_pool.get().await {
         if let Ok(Some(cached)) = redis_conn.get_json::<ProductProperties>(&cache_key).await {
             return Ok(cached);

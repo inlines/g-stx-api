@@ -62,7 +62,7 @@ pub async fn list(
     let ignore_digital = query.ignore_digital.unwrap_or(false);
 
     let cache_key = build_cache_key(cat, limit, offset, &text_query, ignore_digital);
-    
+
     if let Ok(mut redis_conn) = redis_pool.get().await {
         if let Ok(Some(cached)) = redis_conn.get_json::<ProductListResponse>(&cache_key).await {
             return HttpResponse::Ok().json(cached);

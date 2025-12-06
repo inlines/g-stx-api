@@ -91,6 +91,7 @@ async fn main() -> io::Result<()> {
                     .service(register::register)
                     .service(auth::login)
                     .service(collection::add_release)
+                    .service(collection::set_release_price)
                     .service(collection::remove_release)
                     .service(collection::add_wish)
                     .service(collection::remove_wish)
