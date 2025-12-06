@@ -12,6 +12,7 @@ use crate::pagination::Pagination;
 #[derive(Deserialize)]
 struct TrackReleaseRequest {
     release_id: i32,
+    price: Option<i32>
 }
 
 #[derive(Serialize, QueryableByName)]
@@ -39,6 +40,9 @@ struct CollectionItem {
 
     #[diesel(sql_type = Nullable<Text>)]
     region_name: Option<String>,
+
+    #[diesel(sql_type = Nullable<Integer>)]
+    price: Option<i32>,
 }
 
 #[derive(Serialize)]
@@ -202,6 +206,7 @@ async fn get_collection(pool: web::Data<DBPool>, req: HttpRequest, query: web::Q
     let query = r#"
         SELECT 
             uhr.release_id,
+            uhr.price,
             r.release_date,
             r.serial,
             p.name as platform_name,
@@ -287,7 +292,8 @@ async fn get_collection_by_login(
             prod.id as product_id,
             prod.name AS product_name,
             '//89.104.66.193/static/covers-thumb/' || cover.id ||'.jpg' AS image_url,
-            reg.name AS region_name
+            reg.name AS region_name,
+            null AS price
         FROM public.users_have_releases AS uhr
         INNER JOIN releases AS r ON uhr.release_id = r.id
         INNER JOIN platforms AS p ON r.platform = p.id
@@ -430,14 +436,64 @@ async fn add_release(
     let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
 
     let insert_query = r#"
-        INSERT INTO users_have_releases (release_id, user_login)
-        VALUES ($1, $2)
+        INSERT INTO users_have_releases (release_id, user_login, price)
+        VALUES ($1, $2, $3)
         ON CONFLICT DO NOTHING
     "#;
 
     let result = diesel::sql_query(insert_query)
         .bind::<Integer, _>(data.release_id)
         .bind::<Text, _>(&user_login)
+        .bind::<Nullable<Integer>, _>(data.price)
+        .execute(conn);
+
+    match result {
+        Ok(_) => HttpResponse::Ok().body({}),
+        Err(err) => {
+            eprintln!("Insert error: {:?}", err);
+            HttpResponse::InternalServerError().finish()
+        }
+    }
+}
+
+#[post("/set_release_price")]
+async fn set_release_price(
+    pool: web::Data<DBPool>,
+    req: HttpRequest,
+    data: web::Json<TrackReleaseRequest>,
+) -> HttpResponse {
+    // Проверка токена
+    let token = match req.headers().get(header::AUTHORIZATION) {
+        Some(header_value) => {
+            let header_str = header_value.to_str().unwrap_or("");
+            if header_str.starts_with("Bearer ") {
+                Some(&header_str[7..])
+            } else {
+                None
+            }
+        }
+        None => None,
+    };
+
+    let claims = match token.and_then(|t| verify_jwt(t)) {
+        Some(c) => c,
+        None => return HttpResponse::Unauthorized().body("Invalid or missing token"),
+    };
+
+    let user_login = claims.sub;
+
+    let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
+
+    let insert_query = r#"
+        UPDATE users_have_releases
+        SET price = $3
+        WHERE release_id = $1 AND user_login = $2
+    "#;
+
+    let result = diesel::sql_query(insert_query)
+        .bind::<Integer, _>(data.release_id)
+        .bind::<Text, _>(&user_login)
+        .bind::<Nullable<Integer>, _>(data.price)
         .execute(conn);
 
     match result {

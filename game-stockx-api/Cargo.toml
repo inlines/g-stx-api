@@ -19,7 +19,6 @@ jsonwebtoken = "9"
 argon2 = "0.5"
 rand_core = "0.6"
 rand = "0.8"
-sqlx = { version = "0.7", features = ["postgres", "runtime-tokio-native-tls", "macros", "uuid"] }
 redis = { version = "0.23", features = ["tokio-comp"] }
 bb8 = "0.8"
 bb8-redis = "0.14"
