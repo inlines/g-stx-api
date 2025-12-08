@@ -168,7 +168,7 @@ async fn get_product_basic_info(
 
 async fn get_product_releases(
     pool: &Data<DBPool>,
-   redis_pool: &Data<RedisPool>,
+    redis_pool: &Data<RedisPool>,
     product_id: i32,
 ) -> Result<(Vec<ProductReleaseInfo>, Vec<String>), String> {
     let cache_key = build_bids_cache_key(product_id);

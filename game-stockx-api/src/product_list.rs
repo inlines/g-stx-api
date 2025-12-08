@@ -52,7 +52,7 @@ fn build_cache_key(cat: i64, limit: i64, offset: i64, query: &str, ignore_digita
 #[get("/products")]
 pub async fn list(
     pool: Data<DBPool>,
-   redis_pool: Data<RedisPool>,
+    redis_pool: Data<RedisPool>,
     query: web::Query<Pagination>
 ) -> HttpResponse {
     let limit = query.limit.unwrap_or(100);
