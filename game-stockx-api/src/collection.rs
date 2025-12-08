@@ -83,6 +83,9 @@ struct CollectionStats {
 
     #[sql_type = "diesel::sql_types::Array<diesel::sql_types::Integer>"]
     bid_ids: Vec<i32>,
+
+    #[sql_type = "diesel::sql_types::BigInt"]
+    total_spent: i64,
 }
 
 
@@ -127,7 +130,14 @@ async fn get_collection_stats(pool: web::Data<DBPool>, req: HttpRequest) -> Http
         COALESCE(w.release_ids, ARRAY[]::int[]) AS wish_ids,
 
         COALESCE(b.release_count, 0) AS bid_count,
-        COALESCE(b.release_ids, ARRAY[]::int[]) AS bid_ids
+        COALESCE(b.release_ids, ARRAY[]::int[]) AS bid_ids,
+        COALESCE((
+            SELECT SUM(uhr2.price)
+            FROM users_have_releases uhr2
+            WHERE uhr2.user_login = $1 
+            AND uhr2.release_id = ANY(COALESCE(h.release_ids, ARRAY[]::int[]))
+        ), 0) AS total_spent
+
 
         FROM
         (
@@ -164,7 +174,7 @@ async fn get_collection_stats(pool: web::Data<DBPool>, req: HttpRequest) -> Http
         ) b ON COALESCE(h.platform, w.platform) = b.platform;
     "#;
 
-    let result = diesel::sql_query(query)
+    let result: Result<Vec<CollectionStats>, diesel::result::Error> = diesel::sql_query(query)
         .bind::<Text, _>(&user_login)
         .load::<CollectionStats>(conn);
 
