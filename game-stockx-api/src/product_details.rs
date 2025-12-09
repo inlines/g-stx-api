@@ -199,7 +199,7 @@ async fn get_product_releases(
         LEFT JOIN platforms AS p ON r.platform = p.id
         INNER JOIN regions AS reg ON reg.id = r.release_region
         LEFT JOIN users_have_bids AS uhb ON uhb.release_id = r.id
-        WHERE r.product_id = $1 AND p.active = true
+        WHERE r.product_id = $1
         GROUP BY r.id, reg.name, p.name, p.id
         ORDER BY p.name
     "#;
