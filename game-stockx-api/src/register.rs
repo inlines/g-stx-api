@@ -25,6 +25,14 @@ pub struct RegisterRequest {
 
 #[post("/register")]
 pub async fn register(pool: web::Data<DBPool>, data: web::Json<RegisterRequest>) -> HttpResponse {
+
+    if !data.user_login.chars().all(|c| c.is_ascii_alphanumeric()) {
+        return HttpResponse::BadRequest()
+            .json(serde_json::json!({
+                "error": "Логин должен содержать только латинские буквы и цифры"
+            }));
+    }
+
     let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
     let password_hash = hash_password(&data.password);
 
