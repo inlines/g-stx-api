@@ -8,6 +8,7 @@ use diesel::sql_types::{Text, Integer, Nullable, BigInt, Array};
 use actix_web::http::header;
 use serde::{Deserialize, Serialize};
 use crate::pagination::Pagination;
+use crate::metrics::{SUCCESSFUL_ADD_TO_COLLECTION, SUCCESSFUL_ADD_TO_WISHLIST};
 
 #[derive(Deserialize)]
 struct TrackReleaseRequest {
@@ -459,7 +460,7 @@ async fn add_release(
         .execute(conn);
 
     match result {
-        Ok(_) => HttpResponse::Ok().body({}),
+        Ok(_) => { SUCCESSFUL_ADD_TO_COLLECTION.inc(); HttpResponse::Ok().body({})},
         Err(err) => {
             eprintln!("Insert error: {:?}", err);
             HttpResponse::InternalServerError().finish()
@@ -603,7 +604,7 @@ async fn add_wish(
         .execute(conn);
 
     match result {
-        Ok(_) => HttpResponse::Ok().body({}),
+        Ok(_) => { SUCCESSFUL_ADD_TO_WISHLIST.inc(); HttpResponse::Ok().body({})},
         Err(err) => {
             eprintln!("Insert error: {:?}", err);
             HttpResponse::InternalServerError().finish()

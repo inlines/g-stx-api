@@ -50,6 +50,16 @@ lazy_static::lazy_static! {
         "Total successful logins"
     ).unwrap();
 
+    pub static ref SUCCESSFUL_ADD_TO_COLLECTION: Counter = register_counter!(
+        "successful_add_to_collection_total",
+        "Total successful add to collection"
+    ).unwrap();
+
+    pub static ref SUCCESSFUL_ADD_TO_WISHLIST: Counter = register_counter!(
+        "successful_add_to_wishlist_total",
+        "Total successful add to wishlist"
+    ).unwrap();
+
     pub static ref SUCCESSFUL_REGISTRATIONS: Counter = register_counter!(
         "successful_registrations_total",
         "Total successful registrations"
