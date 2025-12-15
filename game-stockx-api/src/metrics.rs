@@ -30,10 +30,18 @@ lazy_static::lazy_static! {
         "Active DB connections in pool"
     ).unwrap();
 
+    // Счетчик неудачных попыток входа с IP и причиной
     pub static ref FAILED_LOGIN_ATTEMPTS: CounterVec = register_counter_vec!(
         "failed_login_attempts_total",
         "Total failed login attempts",
-        &["reason", "username"]  // reason может быть: invalid_password, user_not_found, etc.
+        &["reason", "username", "ip"]  // Добавляем ip
+    ).unwrap();
+    
+    // Счетчик всех попыток входа (успешных и неудачных)
+    pub static ref LOGIN_ATTEMPTS: CounterVec = register_counter_vec!(
+        "login_attempts_total",
+        "Total login attempts",
+        &["status", "username", "ip"]  // status: success, failure
     ).unwrap();
     
     // Опционально: счетчик успешных входов

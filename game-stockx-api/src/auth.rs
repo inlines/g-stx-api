@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use diesel::prelude::*;
 use argon2::{Argon2, PasswordVerifier};
 use argon2::password_hash::PasswordHash;
-use crate::metrics::{FAILED_LOGIN_ATTEMPTS, SUCCESSFUL_LOGINS, LOGIN_ATTEMPTS_BY_IP};
+use crate::metrics::{FAILED_LOGIN_ATTEMPTS, SUCCESSFUL_LOGINS, LOGIN_ATTEMPTS};
 
 #[derive(Serialize, Deserialize)]
 pub struct Claims {
@@ -65,6 +65,11 @@ async fn login(pool: web::Data<DBPool>, credentials: web::Json<LoginRequest>, re
         .peer_addr()
         .map(|s| s.to_string())
         .unwrap_or_else(|| "unknown".to_string());
+    let username = &credentials.user_login;
+
+    LOGIN_ATTEMPTS
+        .with_label_values(&["attempt", username, &client_ip])
+        .inc();
 
     let query = r#"
         SELECT user_login, password_hash
@@ -82,18 +87,20 @@ async fn login(pool: web::Data<DBPool>, credentials: web::Json<LoginRequest>, re
         Ok(user) => {
             if verify_password(&credentials.password, &user.password_hash) {
                 SUCCESSFUL_LOGINS.inc();
-                LOGIN_ATTEMPTS_BY_IP
-                    .with_label_values(&[&client_ip, "success"])
+                LOGIN_ATTEMPTS
+                    .with_label_values(&["success", username, &client_ip])
                     .inc();
                 let token = create_jwt(&user.user_login);
                 return HttpResponse::Ok()
                   .json(serde_json::json!({ "token": token }));
             } else {
+                // НЕВЕРНЫЙ ПАРОЛЬ
                 FAILED_LOGIN_ATTEMPTS
-                    .with_label_values(&["invalid_password", &credentials.user_login])
+                    .with_label_values(&["invalid_password", username, &client_ip])
                     .inc();
-                LOGIN_ATTEMPTS_BY_IP
-                    .with_label_values(&[&client_ip, "failure"])
+                
+                LOGIN_ATTEMPTS
+                    .with_label_values(&["failure", username, &client_ip])
                     .inc();
                 return HttpResponse::Unauthorized()
                   .body("Invalid credentials");
@@ -101,10 +108,10 @@ async fn login(pool: web::Data<DBPool>, credentials: web::Json<LoginRequest>, re
         }
         Err(_) => {
             FAILED_LOGIN_ATTEMPTS
-                .with_label_values(&["user_not_found", &credentials.user_login])
+                .with_label_values(&["user_not_found", username, &client_ip])
                 .inc();
-            LOGIN_ATTEMPTS_BY_IP
-                .with_label_values(&[&client_ip, "failure"])
+            LOGIN_ATTEMPTS
+                .with_label_values(&["failure", username, &client_ip])
                 .inc();
             HttpResponse::Unauthorized().body("Invalid credentials")
         },
