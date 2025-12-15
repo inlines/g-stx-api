@@ -1,4 +1,5 @@
-use prometheus::{register_counter, register_histogram, register_int_gauge, Counter, Histogram, IntGauge};
+use actix_web::{get, HttpResponse};
+use prometheus::{register_counter, register_gauge, register_histogram, Counter, IntGauge, Histogram, Encoder, TextEncoder};
 
 lazy_static::lazy_static! {
     pub static ref HTTP_REQUESTS_TOTAL: Counter = register_counter!(
@@ -26,4 +27,20 @@ lazy_static::lazy_static! {
         "db_pool_connections",
         "Active DB connections in pool"
     ).unwrap();
+}
+
+#[get("/metrics")]
+pub async fn metrics_endpoint() -> HttpResponse {
+    let encoder = TextEncoder::new();
+    let metric_families = prometheus::gather();
+    let mut buffer = vec![];
+    
+    if let Err(e) = encoder.encode(&metric_families, &mut buffer) {
+        eprintln!("Failed to encode metrics: {}", e);
+        return HttpResponse::InternalServerError().finish();
+    }
+    
+    HttpResponse::Ok()
+        .content_type("text/plain; version=0.0.4; charset=utf-8")
+        .body(buffer)
 }

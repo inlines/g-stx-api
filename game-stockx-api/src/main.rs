@@ -15,7 +15,7 @@ use diesel::PgConnection;
 use r2d2::{Pool, PooledConnection};
 use crate::redis::{create_redis_pool};
 
-use actix_web_prom::{PrometheusMetricsBuilder};
+
 use actix::prelude::*;
 
 mod constants;
@@ -58,11 +58,7 @@ async fn main() -> io::Result<()> {
         .await
         .expect("Failed to create Redis pool");
 
-    // Инициализация Prometheus
-    let prometheus = PrometheusMetricsBuilder::new("api")
-        .endpoint("/metrics")
-        .build()
-        .unwrap();
+    use crate::metrics::metrics_endpoint;
 
     // Создание серверного экземпляра ChatServer
     let chat_server = chat::ChatServer::new(pool.clone()).start();
@@ -72,7 +68,8 @@ async fn main() -> io::Result<()> {
     HttpServer::new(move || {
         App::new()
             .wrap(MetricsMiddleware)
-            .wrap(prometheus.clone())
+            //.wrap(prometheus.clone())
+            .service(metrics_endpoint)
             .app_data(web::Data::new(redis_pool.clone()))
             .app_data(web::Data::new(pool.clone()))  // Передаем пул базы данных
             .app_data(chat_server_data.clone())
