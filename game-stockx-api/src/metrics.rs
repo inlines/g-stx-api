@@ -49,6 +49,11 @@ lazy_static::lazy_static! {
         "successful_logins_total",
         "Total successful logins"
     ).unwrap();
+
+    pub static ref SUCCESSFUL_REGISTRATIONS: Counter = register_counter!(
+        "successful_registrations_total",
+        "Total successful registrations"
+    ).unwrap();
     
     // Опционально: счетчик попыток входа по IP
     pub static ref LOGIN_ATTEMPTS_BY_IP: CounterVec = register_counter_vec!(

@@ -6,6 +6,7 @@ use diesel::prelude::*;
 
 use argon2::{Argon2, PasswordHasher};
 use argon2::password_hash::{SaltString, rand_core::OsRng};
+use crate::metrics::{SUCCESSFUL_REGISTRATIONS};
 
 fn hash_password(password: &str) -> String {
     let salt = SaltString::generate(&mut OsRng);
@@ -46,8 +47,8 @@ pub async fn register(pool: web::Data<DBPool>, data: web::Json<RegisterRequest>)
         .execute(conn);
 
     match result {
-        Ok(_) => HttpResponse::Created()
-            .finish(),
+        Ok(_) =>{SUCCESSFUL_REGISTRATIONS.inc(); HttpResponse::Created()
+            .finish()},
         Err(_) => HttpResponse::Conflict()
             .body("User already exists"),
     }
