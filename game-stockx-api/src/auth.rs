@@ -1,11 +1,12 @@
 use crate::constants::{CONNECTION_POOL_ERROR};
-use actix_web::{post, web, HttpResponse};
+use actix_web::{HttpRequest, HttpResponse, post, web};
 use crate::DBPool;
 use jsonwebtoken::{encode, decode, Header, EncodingKey, DecodingKey, Validation};
 use serde::{Deserialize, Serialize};
 use diesel::prelude::*;
 use argon2::{Argon2, PasswordVerifier};
 use argon2::password_hash::PasswordHash;
+use crate::metrics::{FAILED_LOGIN_ATTEMPTS, SUCCESSFUL_LOGINS, LOGIN_ATTEMPTS_BY_IP};
 
 #[derive(Serialize, Deserialize)]
 pub struct Claims {
@@ -56,8 +57,15 @@ struct LoginRequest {
 }
 
 #[post("/login")]
-async fn login(pool: web::Data<DBPool>, data: web::Json<LoginRequest>) -> HttpResponse {
+async fn login(pool: web::Data<DBPool>, credentials: web::Json<LoginRequest>, req: HttpRequest) -> HttpResponse {
     let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
+
+    let client_ip = req
+        .connection_info()
+        .peer_addr()
+        .map(|s| s.to_string())
+        .unwrap_or_else(|| "unknown".to_string());
+
     let query = r#"
         SELECT user_login, password_hash
         FROM users
@@ -66,21 +74,39 @@ async fn login(pool: web::Data<DBPool>, data: web::Json<LoginRequest>) -> HttpRe
     "#;
 
     let result = diesel::sql_query(query)
-        .bind::<diesel::sql_types::Text, _>(&data.user_login)
+        .bind::<diesel::sql_types::Text, _>(&credentials.user_login)
         .get_result::<User>(conn);
     
 
     match result {
         Ok(user) => {
-            if verify_password(&data.password, &user.password_hash) {
+            if verify_password(&credentials.password, &user.password_hash) {
+                SUCCESSFUL_LOGINS.inc();
+                LOGIN_ATTEMPTS_BY_IP
+                    .with_label_values(&[&client_ip, "success"])
+                    .inc();
                 let token = create_jwt(&user.user_login);
                 return HttpResponse::Ok()
                   .json(serde_json::json!({ "token": token }));
             } else {
+                FAILED_LOGIN_ATTEMPTS
+                    .with_label_values(&["invalid_password", &credentials.user_login])
+                    .inc();
+                LOGIN_ATTEMPTS_BY_IP
+                    .with_label_values(&[&client_ip, "failure"])
+                    .inc();
                 return HttpResponse::Unauthorized()
                   .body("Invalid credentials");
             }
         }
-        Err(_) => HttpResponse::Unauthorized().body("Invalid credentials"),
+        Err(_) => {
+            FAILED_LOGIN_ATTEMPTS
+                .with_label_values(&["user_not_found", &credentials.user_login])
+                .inc();
+            LOGIN_ATTEMPTS_BY_IP
+                .with_label_values(&[&client_ip, "failure"])
+                .inc();
+            HttpResponse::Unauthorized().body("Invalid credentials")
+        },
     }
 }

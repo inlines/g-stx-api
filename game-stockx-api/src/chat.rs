@@ -66,19 +66,21 @@ impl Handler<ChatCommand> for ChatServer {
     type Result = ();
 
     fn handle(&mut self, msg: ChatCommand, _: &mut Context<Self>) -> Self::Result {
-        CHAT_MESSAGES_SENT.inc();
         match msg {
             ChatCommand::Connect { login, addr } => {
                 self.sessions.insert(login, addr);
+                WS_CONNECTIONS.inc();
             }
             ChatCommand::Disconnect { login } => {
                 self.sessions.remove(&login);
+                WS_CONNECTIONS.dec();
             }
             ChatCommand::SendMessage {
                 sender,
                 recipient,
                 body,
             } => {
+                CHAT_MESSAGES_SENT.inc();
                 let pool = self.db_pool.clone();
                 let maybe_recipient = self.sessions.get(&recipient).cloned();
                 let message = ClientMessage {

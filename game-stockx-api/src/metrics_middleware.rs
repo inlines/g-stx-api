@@ -1,6 +1,6 @@
 use actix_web::{
     dev::{Service, ServiceRequest, ServiceResponse, Transform},
-    Error,
+    Error, http::StatusCode,
 };
 use futures_util::future::LocalBoxFuture;
 use std::future::{ready, Ready};
@@ -49,14 +49,32 @@ where
 
     fn call(&self, req: ServiceRequest) -> Self::Future {
         let start = Instant::now();
-        HTTP_REQUESTS_TOTAL.inc();
-
+        
+        // Получаем информацию о запросе
+        let method = req.method().to_string();
+        let endpoint = req.path().to_string();
+        
         let service = self.service.clone();
         Box::pin(async move {
-            let res = service.call(req).await?;
+            let res = service.call(req).await;
+            
             let duration = start.elapsed().as_secs_f64();
-            HTTP_REQUESTS_DURATION.observe(duration);
-            Ok(res)
+            let status = match &res {
+                Ok(resp) => resp.response().status().as_u16().to_string(),
+                Err(_) => "500".to_string(), // или другой код ошибки
+            };
+            
+            // Инкрементируем счетчик с метками
+            HTTP_REQUESTS_TOTAL
+                .with_label_values(&[&method, &endpoint, &status])
+                .inc();
+            
+            // Записываем длительность с метками
+            HTTP_REQUESTS_DURATION
+                .with_label_values(&[&method, &endpoint])
+                .observe(duration);
+            
+            res
         })
     }
 }

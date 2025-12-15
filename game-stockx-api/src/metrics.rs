@@ -1,15 +1,17 @@
 use actix_web::{get, HttpResponse};
-use prometheus::{register_counter, register_gauge, register_histogram, Counter, IntGauge, Histogram, Encoder, TextEncoder};
+use prometheus::{register_counter, register_gauge, register_histogram, Counter, IntGauge, HistogramVec, Encoder, TextEncoder, CounterVec};
 
 lazy_static::lazy_static! {
-    pub static ref HTTP_REQUESTS_TOTAL: Counter = register_counter!(
+    pub static ref HTTP_REQUESTS_TOTAL: CounterVec = register_counter_vec!(
         "http_requests_total",
-        "Total HTTP requests"
+        "Total HTTP requests",
+        &["method", "endpoint", "status"]
     ).unwrap();
     
-    pub static ref HTTP_REQUESTS_DURATION: Histogram = register_histogram!(
+    pub static ref HTTP_REQUESTS_DURATION: HistogramVec = register_histogram_vec!(
         "http_request_duration_seconds",
         "HTTP request duration in seconds",
+        &["method", "endpoint"],
         vec![0.05, 0.1, 0.5, 1.0, 2.0, 5.0]
     ).unwrap();
     
@@ -26,6 +28,25 @@ lazy_static::lazy_static! {
     pub static ref DB_POOL_CONNECTIONS: IntGauge = register_int_gauge!(
         "db_pool_connections",
         "Active DB connections in pool"
+    ).unwrap();
+
+    pub static ref FAILED_LOGIN_ATTEMPTS: CounterVec = register_counter_vec!(
+        "failed_login_attempts_total",
+        "Total failed login attempts",
+        &["reason", "username"]  // reason может быть: invalid_password, user_not_found, etc.
+    ).unwrap();
+    
+    // Опционально: счетчик успешных входов
+    pub static ref SUCCESSFUL_LOGINS: Counter = register_counter!(
+        "successful_logins_total",
+        "Total successful logins"
+    ).unwrap();
+    
+    // Опционально: счетчик попыток входа по IP
+    pub static ref LOGIN_ATTEMPTS_BY_IP: CounterVec = register_counter_vec!(
+        "login_attempts_by_ip_total",
+        "Login attempts by IP address",
+        &["ip", "status"]  // status: success, failure
     ).unwrap();
 }
 
