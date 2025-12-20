@@ -24,6 +24,9 @@ pub struct ProductProperties {
 
     #[diesel(sql_type = Nullable<Text>)]
     pub image_url: Option<String>,
+
+    #[diesel(sql_type = Nullable<Array<Text>>)]
+    pub serial: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, QueryableByName)]
@@ -148,10 +151,13 @@ async fn get_product_basic_info(
             prod.name AS name,
             prod.summary AS summary,
             prod.first_release_date AS first_release_date,
+            array_agg(DISTINCT an.name) FILTER (WHERE an.name IS NOT NULL) AS alternative_names,
             '//89.104.66.193/static/covers-full/' || cov.id || '.jpg' AS image_url
         FROM products AS prod
+        LEFT JOIN alternative_names as an on an.product_id = prod.id
         LEFT JOIN covers AS cov ON prod.cover_id = cov.id
         WHERE prod.id = $1
+        GROUP BY prod.id, prod.name, prod.summary, prod.first_release_date, cov.id;
     "#;
 
     let product_info = diesel::sql_query(query)
