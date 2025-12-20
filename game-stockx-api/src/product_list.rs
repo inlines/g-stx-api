@@ -81,14 +81,20 @@ pub async fn list(
 
     let mut base_query = String::from(r#"
         SELECT 
-            prod.id AS id,
-            prod.name AS name,
-            prod.first_release_date AS first_release_date,
-            '//89.104.66.193/static/covers-thumb/' || cov.id || '.jpg' AS image_url
-        FROM product_platforms AS pp
-        INNER JOIN products AS prod ON pp.product_id = prod.id
+        prod.id AS id,
+        prod.name AS name,
+        prod.first_release_date AS first_release_date,
+        '//89.104.66.193/static/covers-thumb/' || cov.id || '.jpg' AS image_url
+        FROM products AS prod
         LEFT JOIN covers AS cov ON prod.cover_id = cov.id
-        WHERE pp.platform_id = $4 AND prod.name ILIKE $3
+        WHERE prod.id IN (
+            SELECT DISTINCT prod.id
+            FROM product_platforms AS pp
+            INNER JOIN products AS prod ON pp.product_id = prod.id
+            LEFT JOIN alternative_names as an on an.product_id = prod.id
+            WHERE pp.platform_id = $4 
+                AND (prod.name ILIKE $3 OR an.name ILIKE $3)
+        )
     "#);
 
     if ignore_digital {
