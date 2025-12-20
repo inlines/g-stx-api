@@ -26,7 +26,7 @@ pub struct ProductProperties {
     pub image_url: Option<String>,
 
     #[diesel(sql_type = Nullable<Array<Text>>)]
-    pub serial: Option<Vec<String>>,
+    pub alternative_names: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, QueryableByName)]
@@ -57,9 +57,6 @@ pub struct ProductReleaseInfo {
 
     #[diesel(sql_type = Nullable<Array<Text>>)]
     pub serial: Option<Vec<String>>,
-
-    #[diesel(sql_type = Nullable<Array<Text>>)]
-    pub alternative_names: Option<Vec<String>>,
 }
 
 #[derive(QueryableByName, Clone, Serialize, Deserialize)]
@@ -149,13 +146,17 @@ async fn get_product_basic_info(
     let conn = &mut pool.get().map_err(|e| e.to_string())?;
 
     let query = r#"
-        SELECT 
+    SELECT 
             prod.id AS id,
             prod.name AS name,
             prod.summary AS summary,
             prod.first_release_date AS first_release_date,
             array_agg(DISTINCT an.name) FILTER (WHERE an.name IS NOT NULL) AS alternative_names,
-            '//89.104.66.193/static/covers-full/' || cov.id || '.jpg' AS image_url
+            CASE 
+                WHEN cov.id IS NOT NULL 
+                THEN '//89.104.66.193/static/covers-full/' || cov.id || '.jpg'
+                ELSE NULL
+            END AS image_url
         FROM products AS prod
         LEFT JOIN alternative_names as an on an.product_id = prod.id
         LEFT JOIN covers AS cov ON prod.cover_id = cov.id
