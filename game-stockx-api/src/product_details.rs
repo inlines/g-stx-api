@@ -24,6 +24,9 @@ pub struct ProductProperties {
 
     #[diesel(sql_type = Nullable<Text>)]
     pub image_url: Option<String>,
+
+    #[diesel(sql_type = Nullable<Array<Text>>)]
+    pub serial: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, QueryableByName)]
@@ -54,6 +57,9 @@ pub struct ProductReleaseInfo {
 
     #[diesel(sql_type = Nullable<Array<Text>>)]
     pub serial: Option<Vec<String>>,
+
+    #[diesel(sql_type = Nullable<Array<Text>>)]
+    pub alternative_names: Option<Vec<String>>,
 }
 
 #[derive(QueryableByName, Clone, Serialize, Deserialize)]
@@ -80,7 +86,7 @@ fn build_bids_cache_key(product_id: i32) -> String {
 #[get("/products/{id}")]
 pub async fn get(
     pool: Data<DBPool>,
-    //redis_pool: Data<RedisPool>,
+    redis_pool: Data<RedisPool>,
     path: Path<i32>,
     req: HttpRequest,
 ) -> HttpResponse {
@@ -98,7 +104,7 @@ pub async fn get(
             }
         });
 
-    let basic_info = match get_product_basic_info(&pool, product_id).await {
+    let basic_info = match get_product_basic_info(&pool, &redis_pool, product_id).await {
         Ok(info) => info,
         Err(e) => {
             eprintln!("Error getting product info: {}", e);
@@ -106,7 +112,7 @@ pub async fn get(
         }
     };
 
-    let (mut releases, screenshots) = match get_product_releases(&pool, product_id).await {
+    let (mut releases, screenshots) = match get_product_releases(&pool, &redis_pool, product_id).await {
         Ok(data) => data,
         Err(e) => {
             eprintln!("Error getting releases: {}", e);
@@ -129,16 +135,16 @@ pub async fn get(
 
 async fn get_product_basic_info(
     pool: &Data<DBPool>,
-    //redis_pool: &Data<RedisPool>,
+    redis_pool: &Data<RedisPool>,
     product_id: i32,
 ) -> Result<ProductProperties, String> {
     let cache_key = build_product_cache_key(product_id);
 
-    // if let Ok(mut redis_conn) = redis_pool.get().await {
-    //     if let Ok(Some(cached)) = redis_conn.get_json::<ProductProperties>(&cache_key).await {
-    //         return Ok(cached);
-    //     }
-    // }
+    if let Ok(mut redis_conn) = redis_pool.get().await {
+        if let Ok(Some(cached)) = redis_conn.get_json::<ProductProperties>(&cache_key).await {
+            return Ok(cached);
+        }
+    }
 
     let conn = &mut pool.get().map_err(|e| e.to_string())?;
 
@@ -148,10 +154,13 @@ async fn get_product_basic_info(
             prod.name AS name,
             prod.summary AS summary,
             prod.first_release_date AS first_release_date,
+            array_agg(DISTINCT an.name) FILTER (WHERE an.name IS NOT NULL) AS alternative_names,
             '//89.104.66.193/static/covers-full/' || cov.id || '.jpg' AS image_url
         FROM products AS prod
+        LEFT JOIN alternative_names as an on an.product_id = prod.id
         LEFT JOIN covers AS cov ON prod.cover_id = cov.id
         WHERE prod.id = $1
+        GROUP BY prod.id, prod.name, prod.summary, prod.first_release_date, cov.id;
     "#;
 
     let product_info = diesel::sql_query(query)
@@ -159,25 +168,25 @@ async fn get_product_basic_info(
         .get_result::<ProductProperties>(conn)
         .map_err(|e| e.to_string())?;
 
-    // if let Ok(mut redis_conn) = redis_pool.get().await {
-    //     let _ = redis_conn.set_json(&cache_key, &product_info, 86400).await;
-    // }
+    if let Ok(mut redis_conn) = redis_pool.get().await {
+        let _ = redis_conn.set_json(&cache_key, &product_info, 86400).await;
+    }
 
     Ok(product_info)
 }
 
 async fn get_product_releases(
     pool: &Data<DBPool>,
-   // redis_pool: &Data<RedisPool>,
+    redis_pool: &Data<RedisPool>,
     product_id: i32,
 ) -> Result<(Vec<ProductReleaseInfo>, Vec<String>), String> {
     let cache_key = build_bids_cache_key(product_id);
     
-    // if let Ok(mut redis_conn) = redis_pool.get().await {
-    //     if let Ok(Some(cached)) = redis_conn.get_json::<(Vec<ProductReleaseInfo>, Vec<String>)>(&cache_key).await {
-    //         return Ok(cached);
-    //     }
-    // }
+    if let Ok(mut redis_conn) = redis_pool.get().await {
+        if let Ok(Some(cached)) = redis_conn.get_json::<(Vec<ProductReleaseInfo>, Vec<String>)>(&cache_key).await {
+            return Ok(cached);
+        }
+    }
 
     let conn = &mut pool.get().map_err(|e| e.to_string())?;
 
@@ -199,7 +208,7 @@ async fn get_product_releases(
         LEFT JOIN platforms AS p ON r.platform = p.id
         INNER JOIN regions AS reg ON reg.id = r.release_region
         LEFT JOIN users_have_bids AS uhb ON uhb.release_id = r.id
-        WHERE r.product_id = $1 AND p.active = true
+        WHERE r.product_id = $1
         GROUP BY r.id, reg.name, p.name, p.id
         ORDER BY p.name
     "#;
@@ -223,10 +232,10 @@ async fn get_product_releases(
         .map(|s| s.image_url)
         .collect();
 
-    // if let Ok(mut redis_conn) = redis_pool.get().await {
-    //     let cache_data = (releases.clone(), screenshots.clone());
-    //     let _ = redis_conn.set_json(&cache_key, &cache_data, 60).await;
-    // }
+    if let Ok(mut redis_conn) = redis_pool.get().await {
+        let cache_data = (releases.clone(), screenshots.clone());
+        let _ = redis_conn.set_json(&cache_key, &cache_data, 60).await;
+    }
 
     Ok((releases, screenshots))
 }
