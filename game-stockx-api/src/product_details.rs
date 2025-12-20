@@ -57,6 +57,9 @@ pub struct ProductReleaseInfo {
 
     #[diesel(sql_type = Nullable<Array<Text>>)]
     pub serial: Option<Vec<String>>,
+
+    #[diesel(sql_type = Nullable<Array<Text>>)]
+    pub alternative_names: Option<Vec<String>>,
 }
 
 #[derive(QueryableByName, Clone, Serialize, Deserialize)]
