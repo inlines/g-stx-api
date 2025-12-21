@@ -301,7 +301,7 @@ async fn get_product_companies(
 
     let query = r#"
         SELECT 
-            ic.id as ic_id, 
+            ic.id, 
             ic.company, 
             ic.game, 
             ic.developer, 
