@@ -26,7 +26,7 @@ pub struct ProductProperties {
     pub image_url: Option<String>,
 
     #[diesel(sql_type = Nullable<Array<Text>>)]
-    pub serial: Option<Vec<String>>,
+    pub alternative_names: Option<Vec<String>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, QueryableByName)]
@@ -57,10 +57,35 @@ pub struct ProductReleaseInfo {
 
     #[diesel(sql_type = Nullable<Array<Text>>)]
     pub serial: Option<Vec<String>>,
-
-    #[diesel(sql_type = Nullable<Array<Text>>)]
-    pub alternative_names: Option<Vec<String>>,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize, QueryableByName)]
+pub struct Company {
+    #[diesel(sql_type = Integer)]
+    pub id: i32,  // id из involved_companies
+    
+    #[diesel(sql_type = Integer)]
+    pub company: i32,  // company_id
+    
+    #[diesel(sql_type = Integer)]
+    pub game: i32,
+    
+    #[diesel(sql_type = Nullable<Bool>)]
+    pub developer: Option<bool>,
+    
+    #[diesel(sql_type = Nullable<Bool>)]
+    pub porting: Option<bool>,
+    
+    #[diesel(sql_type = Nullable<Bool>)]
+    pub publisher: Option<bool>,
+    
+    #[diesel(sql_type = Nullable<Bool>)]
+    pub supporting: Option<bool>,
+    
+    #[diesel(sql_type = Nullable<Text>)]
+    pub name: Option<String>, 
+}
+
 
 #[derive(QueryableByName, Clone, Serialize, Deserialize)]
 struct ScreenshotUrl {
@@ -73,6 +98,7 @@ pub struct ProductResponse {
     pub product: ProductProperties,
     pub releases: Vec<ProductReleaseInfo>,
     pub screenshots: Vec<String>,
+    pub companies: Vec<Company>,
 }
 
 fn build_product_cache_key(product_id: i32) -> String {
@@ -86,7 +112,6 @@ fn build_bids_cache_key(product_id: i32) -> String {
 #[get("/products/{id}")]
 pub async fn get(
     pool: Data<DBPool>,
-    redis_pool: Data<RedisPool>,
     path: Path<i32>,
     req: HttpRequest,
 ) -> HttpResponse {
@@ -104,7 +129,7 @@ pub async fn get(
             }
         });
 
-    let basic_info = match get_product_basic_info(&pool, &redis_pool, product_id).await {
+    let basic_info = match get_product_basic_info(&pool, product_id).await {
         Ok(info) => info,
         Err(e) => {
             eprintln!("Error getting product info: {}", e);
@@ -112,10 +137,18 @@ pub async fn get(
         }
     };
 
-    let (mut releases, screenshots) = match get_product_releases(&pool, &redis_pool, product_id).await {
+    let (mut releases, screenshots) = match get_product_releases(&pool, product_id).await {
         Ok(data) => data,
         Err(e) => {
             eprintln!("Error getting releases: {}", e);
+            return HttpResponse::InternalServerError().finish();
+        }
+    };
+
+    let (mut companies) = match get_product_companies(&pool, product_id).await {
+        Ok(data) => data,
+        Err(e) => {
+            eprintln!("Error getting companies: {}", e);
             return HttpResponse::InternalServerError().finish();
         }
     };
@@ -130,21 +163,15 @@ pub async fn get(
         product: basic_info,
         releases,
         screenshots,
+        companies,
     })
 }
 
 async fn get_product_basic_info(
     pool: &Data<DBPool>,
-    redis_pool: &Data<RedisPool>,
     product_id: i32,
 ) -> Result<ProductProperties, String> {
     let cache_key = build_product_cache_key(product_id);
-
-    if let Ok(mut redis_conn) = redis_pool.get().await {
-        if let Ok(Some(cached)) = redis_conn.get_json::<ProductProperties>(&cache_key).await {
-            return Ok(cached);
-        }
-    }
 
     let conn = &mut pool.get().map_err(|e| e.to_string())?;
 
@@ -168,25 +195,14 @@ async fn get_product_basic_info(
         .get_result::<ProductProperties>(conn)
         .map_err(|e| e.to_string())?;
 
-    if let Ok(mut redis_conn) = redis_pool.get().await {
-        let _ = redis_conn.set_json(&cache_key, &product_info, 86400).await;
-    }
-
     Ok(product_info)
 }
 
 async fn get_product_releases(
     pool: &Data<DBPool>,
-    redis_pool: &Data<RedisPool>,
     product_id: i32,
 ) -> Result<(Vec<ProductReleaseInfo>, Vec<String>), String> {
     let cache_key = build_bids_cache_key(product_id);
-    
-    if let Ok(mut redis_conn) = redis_pool.get().await {
-        if let Ok(Some(cached)) = redis_conn.get_json::<(Vec<ProductReleaseInfo>, Vec<String>)>(&cache_key).await {
-            return Ok(cached);
-        }
-    }
 
     let conn = &mut pool.get().map_err(|e| e.to_string())?;
 
@@ -232,10 +248,35 @@ async fn get_product_releases(
         .map(|s| s.image_url)
         .collect();
 
-    if let Ok(mut redis_conn) = redis_pool.get().await {
-        let cache_data = (releases.clone(), screenshots.clone());
-        let _ = redis_conn.set_json(&cache_key, &cache_data, 60).await;
-    }
-
     Ok((releases, screenshots))
+}
+
+async fn get_product_companies(
+    pool: &Data<DBPool>,
+    product_id: i32,
+) -> Result<Vec<Company>, String> {
+
+    let conn = &mut pool.get().map_err(|e| e.to_string())?;
+
+    let query = r#"
+        SELECT 
+            ic.id, 
+            ic.company, 
+            ic.game, 
+            ic.developer, 
+            ic.porting, 
+            ic.publisher, 
+            ic.supporting, 
+            c.name
+        FROM public.involved_companies as ic 
+        LEFT JOIN companies as c ON ic.company = c.id
+        WHERE ic.game = $1
+    "#;
+
+    let product_companies = diesel::sql_query(query)
+        .bind::<Integer, _>(product_id)
+        .load::<Company>(conn)
+        .map_err(|e| e.to_string())?;
+
+    Ok(product_companies)
 }
