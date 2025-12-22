@@ -62,7 +62,7 @@ pub struct ProductReleaseInfo {
 #[derive(Debug, Clone, Serialize, Deserialize, QueryableByName)]
 pub struct Company {
     #[diesel(sql_type = Integer)]
-    pub id: i32,  // id из involved_companies
+    pub id: i32,
     
     #[diesel(sql_type = Integer)]
     pub company: i32,  // company_id
@@ -86,6 +86,17 @@ pub struct Company {
     pub name: Option<String>, 
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, QueryableByName)]
+pub struct Franschise {
+    #[diesel(sql_type = Integer)]
+    pub franschise_id: i32,
+    #[diesel(sql_type = Integer)]
+    pub product_id: i32,
+    #[diesel(sql_type = Text)]
+    pub franschise_name: String,
+    #[sql_type = "diesel::sql_types::BigInt"]
+    pub total_games_count: i64,
+}
 
 
 #[derive(QueryableByName, Clone, Serialize, Deserialize)]
@@ -100,6 +111,7 @@ pub struct ProductResponse {
     pub releases: Vec<ProductReleaseInfo>,
     pub screenshots: Vec<String>,
     pub companies: Vec<Company>,
+    pub franschises: Vec<Franschise>,
 }
 
 fn build_product_cache_key(product_id: i32) -> String {
@@ -112,6 +124,10 @@ fn build_bids_cache_key(product_id: i32) -> String {
 
 fn build_product_companies_cache_key(product_id: i32) -> String {
     format!("product_details:companies:{}", product_id)
+}
+
+fn build_product_franschises_cache_key(product_id: i32) -> String {
+    format!("product_details:franschises:{}", product_id)
 }
 
 #[get("/products/{id}")]
@@ -159,6 +175,14 @@ pub async fn get(
         }
     };
 
+    let (mut franschises) = match get_product_franschises(&pool, &redis_pool, product_id).await {
+        Ok(data) => data,
+        Err(e) => {
+            eprintln!("Error getting franschises: {}", e);
+            return HttpResponse::InternalServerError().finish();
+        }
+    };
+
     if let Some(login) = user_login_opt {
         for release in &mut releases {
             release.bid_user_logins.retain(|l| l != &login);
@@ -170,6 +194,7 @@ pub async fn get(
         releases,
         screenshots,
         companies,
+        franschises
     })
 }
 
@@ -322,6 +347,45 @@ async fn get_product_companies(
     if let Ok(mut redis_conn) = redis_pool.get().await {
         let _ = redis_conn.set_json(&cache_key, &product_companies, 86400).await;
     }
-
     Ok(product_companies)
+}
+
+async fn get_product_franschises(
+    pool: &Data<DBPool>,
+    redis_pool: &Data<RedisPool>,
+    product_id: i32,
+) -> Result<Vec<Franschise>, String> {
+    let cache_key = build_product_franschises_cache_key(product_id);
+
+    if let Ok(mut redis_conn) = redis_pool.get().await {
+        if let Ok(Some(cached)) = redis_conn.get_json::<Vec<Franschise>>(&cache_key).await {
+            return Ok(cached);
+        }
+    }
+
+    let conn = &mut pool.get().map_err(|e| e.to_string())?;
+
+    let query = r#"
+        SELECT *
+        FROM (
+            SELECT 
+                gf.franschise_id, 
+                gf.product_id, 
+                f.name as franschise_name,
+                COUNT(*) OVER (PARTITION BY gf.franschise_id) as total_games_count
+            FROM public.game_franschises as gf
+            INNER JOIN franschises as f ON gf.franschise_id = f.id
+        ) as subquery
+        WHERE product_id = $1
+    "#;
+
+    let product_franschise = diesel::sql_query(query)
+        .bind::<Integer, _>(product_id)
+        .load::<Franschise>(conn)
+        .map_err(|e| e.to_string())?;
+
+    if let Ok(mut redis_conn) = redis_pool.get().await {
+        let _ = redis_conn.set_json(&cache_key, &product_franschise, 86400).await;
+    }
+    Ok(product_franschise)
 }
