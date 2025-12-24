@@ -87,6 +87,18 @@ pub struct Company {
 }
 
 
+#[derive(Debug, Clone, Serialize, Deserialize, QueryableByName)]
+pub struct Franschise {
+    #[diesel(sql_type = Integer)]
+    pub franschise_id: i32,
+    #[diesel(sql_type = Integer)]
+    pub product_id: i32,
+    #[diesel(sql_type = Text)]
+    pub franschise_name: String,
+    #[sql_type = "diesel::sql_types::BigInt"]
+    pub total_games_count: i64,
+}
+
 #[derive(QueryableByName, Clone, Serialize, Deserialize)]
 struct ScreenshotUrl {
     #[diesel(sql_type = Text)]
@@ -99,6 +111,7 @@ pub struct ProductResponse {
     pub releases: Vec<ProductReleaseInfo>,
     pub screenshots: Vec<String>,
     pub companies: Vec<Company>,
+    pub franschises: Vec<Franschise>,
 }
 
 fn build_product_cache_key(product_id: i32) -> String {
@@ -107,6 +120,10 @@ fn build_product_cache_key(product_id: i32) -> String {
 
 fn build_bids_cache_key(product_id: i32) -> String {
     format!("product_details:bids:{}", product_id)
+}
+
+fn build_product_franschises_cache_key(product_id: i32) -> String {
+    format!("product_details:franschises:{}", product_id)
 }
 
 #[get("/products/{id}")]
@@ -153,6 +170,14 @@ pub async fn get(
         }
     };
 
+    let (mut franschises) = match get_product_franschises(&pool, product_id).await {
+        Ok(data) => data,
+        Err(e) => {
+            eprintln!("Error getting franschises: {}", e);
+            return HttpResponse::InternalServerError().finish();
+        }
+    };
+
     if let Some(login) = user_login_opt {
         for release in &mut releases {
             release.bid_user_logins.retain(|l| l != &login);
@@ -164,6 +189,7 @@ pub async fn get(
         releases,
         screenshots,
         companies,
+        franschises
     })
 }
 
@@ -279,4 +305,33 @@ async fn get_product_companies(
         .map_err(|e| e.to_string())?;
 
     Ok(product_companies)
+}
+
+async fn get_product_franschises(
+    pool: &Data<DBPool>,
+    product_id: i32,
+) -> Result<Vec<Franschise>, String> {
+
+    let conn = &mut pool.get().map_err(|e| e.to_string())?;
+
+    let query = r#"
+        SELECT *
+        FROM (
+            SELECT 
+                gf.franschise_id, 
+                gf.product_id, 
+                f.name as franschise_name,
+                COUNT(*) OVER (PARTITION BY gf.franschise_id) as total_games_count
+            FROM public.game_franschises as gf
+            INNER JOIN franschises as f ON gf.franschise_id = f.id
+        ) as subquery
+        WHERE product_id = $1
+    "#;
+
+    let product_franschise = diesel::sql_query(query)
+        .bind::<Integer, _>(product_id)
+        .load::<Franschise>(conn)
+        .map_err(|e| e.to_string())?;
+    
+    Ok(product_franschise)
 }
