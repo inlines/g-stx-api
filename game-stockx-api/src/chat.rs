@@ -14,7 +14,8 @@ use actix_web::http::header;
 use crate::{DBPool};
 use actix_rt::task::spawn_blocking;
 use chrono::{DateTime, Utc};
-
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use crate::metrics::{WS_CONNECTIONS, CHAT_MESSAGES_SENT};
 
 #[derive(Message, Serialize, Deserialize, Debug, Clone)]
@@ -69,11 +70,9 @@ impl Handler<ChatCommand> for ChatServer {
         match msg {
             ChatCommand::Connect { login, addr } => {
                 self.sessions.insert(login, addr);
-                WS_CONNECTIONS.inc();
             }
             ChatCommand::Disconnect { login } => {
                 self.sessions.remove(&login);
-                WS_CONNECTIONS.dec();
             }
             ChatCommand::SendMessage {
                 sender,
@@ -119,12 +118,16 @@ impl Handler<ChatCommand> for ChatServer {
 pub struct ChatSession {
     pub login: String,
     pub addr: Addr<ChatServer>,
+    disconnected: Arc<AtomicBool>,
 }
 
 impl Actor for ChatSession {
     type Context = ws::WebsocketContext<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
+
+        WS_CONNECTIONS.inc();
+
         self.addr.do_send(ChatCommand::Connect {
             login: self.login.clone(),
             addr: ctx.address().recipient(),
@@ -137,9 +140,13 @@ impl Actor for ChatSession {
     
 
     fn stopped(&mut self, _: &mut Self::Context) {
-        self.addr.do_send(ChatCommand::Disconnect {
-            login: self.login.clone(),
-        });
+        if !self.disconnected.swap(true, Ordering::SeqCst) {
+            WS_CONNECTIONS.dec();
+
+            self.addr.do_send(ChatCommand::Disconnect {
+                login: self.login.clone(),
+            });
+        }
     }
 }
 
@@ -203,6 +210,7 @@ pub async fn chat_ws(
     let session = ChatSession {
         login: login.into_inner(),
         addr: srv.get_ref().clone(),
+        disconnected: Arc::new(AtomicBool::new(false)),
     };
     ws::start(session, &req, stream)
 }
