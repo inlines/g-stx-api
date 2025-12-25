@@ -4,6 +4,7 @@ use actix_web_actors::ws;
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager};
 use diesel::PgConnection;
+use prometheus::core::Collector;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use actix_web_actors::ws::ProtocolError;
@@ -66,12 +67,13 @@ impl Handler<ChatCommand> for ChatServer {
     type Result = ();
 
     fn handle(&mut self, msg: ChatCommand, _: &mut Context<Self>) -> Self::Result {
-        CHAT_MESSAGES_SENT.inc();
         match msg {
             ChatCommand::Connect { login, addr } => {
+                WS_CONNECTIONS.inc();
                 self.sessions.insert(login, addr);
             }
             ChatCommand::Disconnect { login } => {
+                WS_CONNECTIONS.dec();
                 self.sessions.remove(&login);
             }
             ChatCommand::SendMessage {
@@ -79,6 +81,7 @@ impl Handler<ChatCommand> for ChatServer {
                 recipient,
                 body,
             } => {
+                CHAT_MESSAGES_SENT.inc();
                 let pool = self.db_pool.clone();
                 let maybe_recipient = self.sessions.get(&recipient).cloned();
                 let message = ClientMessage {
