@@ -5,7 +5,7 @@ use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager};
 use diesel::PgConnection;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use actix_web_actors::ws::ProtocolError;
 use diesel::sql_types::{Text, Timestamptz};
 use crate::constants::{CONNECTION_POOL_ERROR};
@@ -36,6 +36,7 @@ pub enum ChatCommand {
     },
     Disconnect {
         login: String,
+        addr: Recipient<ClientMessage>,
     },
     SendMessage {
         sender: String,
@@ -45,7 +46,7 @@ pub enum ChatCommand {
 }
 
 pub struct ChatServer {
-    sessions: HashMap<String, Recipient<ClientMessage>>,
+    sessions: HashMap<String, HashSet<Recipient<ClientMessage>>>,
     db_pool: r2d2::Pool<ConnectionManager<PgConnection>>, // Пул Diesel
 }
 
@@ -69,10 +70,18 @@ impl Handler<ChatCommand> for ChatServer {
     fn handle(&mut self, msg: ChatCommand, _: &mut Context<Self>) -> Self::Result {
         match msg {
             ChatCommand::Connect { login, addr } => {
-                self.sessions.insert(login, addr);
+                self.sessions
+                    .entry(login)
+                    .or_insert_with(HashSet::new)
+                    .insert(addr);
             }
-            ChatCommand::Disconnect { login } => {
-                self.sessions.remove(&login);
+            ChatCommand::Disconnect { login, addr } => {
+                if let Some(sessions) = self.sessions.get_mut(&login) {
+                    sessions.remove(&addr);
+                    if sessions.is_empty() {
+                        self.sessions.remove(&login);
+                    }
+                }
             }
             ChatCommand::SendMessage {
                 sender,
@@ -81,7 +90,7 @@ impl Handler<ChatCommand> for ChatServer {
             } => {
                 CHAT_MESSAGES_SENT.inc();
                 let pool = self.db_pool.clone();
-                let maybe_recipient = self.sessions.get(&recipient).cloned();
+                
                 let message = ClientMessage {
                     sender: sender.clone(),
                     recipient: recipient.clone(),
@@ -90,8 +99,11 @@ impl Handler<ChatCommand> for ChatServer {
                 };
 
                 // Отправка сообщения пользователю, если он онлайн
-                if let Some(addr) = maybe_recipient {
-                    let _ = addr.do_send(message.clone());
+                if let Some(sessions) = self.sessions.get(&recipient) {
+                    // Отправляем каждому активному соединению
+                    for addr in sessions {
+                        let _ = addr.do_send(message.clone());
+                    }
                 }
 
                 spawn_blocking(move || {
@@ -139,13 +151,13 @@ impl Actor for ChatSession {
     }
     
 
-    fn stopped(&mut self, _: &mut Self::Context) {
+    fn stopped(&mut self, ctx: &mut Self::Context) {
         if !self.disconnected.swap(true, Ordering::SeqCst) {
-            WS_CONNECTIONS.dec();
-
             self.addr.do_send(ChatCommand::Disconnect {
                 login: self.login.clone(),
+                addr: ctx.address().recipient(), // Передаем свой addr
             });
+            WS_CONNECTIONS.dec();
         }
     }
 }
