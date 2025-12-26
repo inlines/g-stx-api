@@ -47,7 +47,7 @@ pub enum ChatCommand {
 
 pub struct ChatServer {
     sessions: HashMap<String, HashSet<Recipient<ClientMessage>>>,
-    db_pool: r2d2::Pool<ConnectionManager<PgConnection>>, // Пул Diesel
+    db_pool: r2d2::Pool<ConnectionManager<PgConnection>>,
 }
 
 impl ChatServer {
@@ -71,16 +71,24 @@ impl Handler<ChatCommand> for ChatServer {
         match msg {
             ChatCommand::Connect { login, addr } => {
                 println!("ConnectedWS: {}", login.clone());
+
+                let was_online = self.sessions.contains_key(&login);
+
                 self.sessions
                     .entry(login)
                     .or_insert_with(HashSet::new)
                     .insert(addr);
+
+                if !was_online {
+                    WS_CONNECTIONS.inc();
+                }
             }
             ChatCommand::Disconnect { login, addr } => {
                 if let Some(sessions) = self.sessions.get_mut(&login) {
                     sessions.remove(&addr);
                     if sessions.is_empty() {
                         self.sessions.remove(&login);
+                        WS_CONNECTIONS.dec();
                     }
                 }
                 println!("DisconnectedWS: {}", login);
@@ -140,8 +148,6 @@ impl Actor for ChatSession {
 
     fn started(&mut self, ctx: &mut Self::Context) {
 
-        WS_CONNECTIONS.inc();
-
         self.addr.do_send(ChatCommand::Connect {
             login: self.login.clone(),
             addr: ctx.address().recipient(),
@@ -159,7 +165,6 @@ impl Actor for ChatSession {
                 login: self.login.clone(),
                 addr: ctx.address().recipient(), // Передаем свой addr
             });
-            WS_CONNECTIONS.dec();
         }
     }
 }
