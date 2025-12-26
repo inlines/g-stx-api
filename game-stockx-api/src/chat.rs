@@ -4,9 +4,8 @@ use actix_web_actors::ws;
 use diesel::prelude::*;
 use diesel::r2d2::{ConnectionManager};
 use diesel::PgConnection;
-use prometheus::core::Collector;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use actix_web_actors::ws::ProtocolError;
 use diesel::sql_types::{Text, Timestamptz};
 use crate::constants::{CONNECTION_POOL_ERROR};
@@ -15,7 +14,8 @@ use actix_web::http::header;
 use crate::{DBPool};
 use actix_rt::task::spawn_blocking;
 use chrono::{DateTime, Utc};
-
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Arc;
 use crate::metrics::{WS_CONNECTIONS, CHAT_MESSAGES_SENT};
 
 #[derive(Message, Serialize, Deserialize, Debug, Clone)]
@@ -36,6 +36,7 @@ pub enum ChatCommand {
     },
     Disconnect {
         login: String,
+        addr: Recipient<ClientMessage>,
     },
     SendMessage {
         sender: String,
@@ -45,8 +46,8 @@ pub enum ChatCommand {
 }
 
 pub struct ChatServer {
-    sessions: HashMap<String, Recipient<ClientMessage>>,
-    db_pool: r2d2::Pool<ConnectionManager<PgConnection>>, // Пул Diesel
+    sessions: HashMap<String, HashSet<Recipient<ClientMessage>>>,
+    db_pool: r2d2::Pool<ConnectionManager<PgConnection>>,
 }
 
 impl ChatServer {
@@ -69,12 +70,28 @@ impl Handler<ChatCommand> for ChatServer {
     fn handle(&mut self, msg: ChatCommand, _: &mut Context<Self>) -> Self::Result {
         match msg {
             ChatCommand::Connect { login, addr } => {
-                WS_CONNECTIONS.inc();
-                self.sessions.insert(login, addr);
+                println!("ConnectedWS: {}", login.clone());
+
+                let was_online = self.sessions.contains_key(&login);
+
+                self.sessions
+                    .entry(login)
+                    .or_insert_with(HashSet::new)
+                    .insert(addr);
+
+                if !was_online {
+                    WS_CONNECTIONS.inc();
+                }
             }
-            ChatCommand::Disconnect { login } => {
-                WS_CONNECTIONS.dec();
-                self.sessions.remove(&login);
+            ChatCommand::Disconnect { login, addr } => {
+                if let Some(sessions) = self.sessions.get_mut(&login) {
+                    sessions.remove(&addr);
+                    if sessions.is_empty() {
+                        self.sessions.remove(&login);
+                        WS_CONNECTIONS.dec();
+                    }
+                }
+                println!("DisconnectedWS: {}", login);
             }
             ChatCommand::SendMessage {
                 sender,
@@ -83,7 +100,7 @@ impl Handler<ChatCommand> for ChatServer {
             } => {
                 CHAT_MESSAGES_SENT.inc();
                 let pool = self.db_pool.clone();
-                let maybe_recipient = self.sessions.get(&recipient).cloned();
+                
                 let message = ClientMessage {
                     sender: sender.clone(),
                     recipient: recipient.clone(),
@@ -92,8 +109,11 @@ impl Handler<ChatCommand> for ChatServer {
                 };
 
                 // Отправка сообщения пользователю, если он онлайн
-                if let Some(addr) = maybe_recipient {
-                    let _ = addr.do_send(message.clone());
+                if let Some(sessions) = self.sessions.get(&recipient) {
+                    // Отправляем каждому активному соединению
+                    for addr in sessions {
+                        let _ = addr.do_send(message.clone());
+                    }
                 }
 
                 spawn_blocking(move || {
@@ -120,12 +140,14 @@ impl Handler<ChatCommand> for ChatServer {
 pub struct ChatSession {
     pub login: String,
     pub addr: Addr<ChatServer>,
+    disconnected: Arc<AtomicBool>,
 }
 
 impl Actor for ChatSession {
     type Context = ws::WebsocketContext<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
+
         self.addr.do_send(ChatCommand::Connect {
             login: self.login.clone(),
             addr: ctx.address().recipient(),
@@ -137,10 +159,13 @@ impl Actor for ChatSession {
     }
     
 
-    fn stopped(&mut self, _: &mut Self::Context) {
-        self.addr.do_send(ChatCommand::Disconnect {
-            login: self.login.clone(),
-        });
+    fn stopped(&mut self, ctx: &mut Self::Context) {
+        if !self.disconnected.swap(true, Ordering::SeqCst) {
+            self.addr.do_send(ChatCommand::Disconnect {
+                login: self.login.clone(),
+                addr: ctx.address().recipient(), // Передаем свой addr
+            });
+        }
     }
 }
 
@@ -204,6 +229,7 @@ pub async fn chat_ws(
     let session = ChatSession {
         login: login.into_inner(),
         addr: srv.get_ref().clone(),
+        disconnected: Arc::new(AtomicBool::new(false)),
     };
     ws::start(session, &req, stream)
 }
