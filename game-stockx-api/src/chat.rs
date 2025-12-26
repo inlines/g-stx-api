@@ -70,7 +70,7 @@ impl Handler<ChatCommand> for ChatServer {
     fn handle(&mut self, msg: ChatCommand, _: &mut Context<Self>) -> Self::Result {
         match msg {
             ChatCommand::Connect { login, addr } => {
-                println!("Connected: {}", login.clone());
+                println!("ConnectedWS: {}", login.clone());
                 self.sessions
                     .entry(login)
                     .or_insert_with(HashSet::new)
@@ -83,7 +83,7 @@ impl Handler<ChatCommand> for ChatServer {
                         self.sessions.remove(&login);
                     }
                 }
-                println!("Connected: {}", login);
+                println!("DisconnectedWS: {}", login);
             }
             ChatCommand::SendMessage {
                 sender,
