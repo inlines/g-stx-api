@@ -167,7 +167,7 @@ pub async fn get(
         }
     };
 
-    let (mut companies) = match get_product_companies(&pool, &redis_pool, product_id).await {
+    let (companies) = match get_product_companies(&pool, &redis_pool, product_id).await {
         Ok(data) => data,
         Err(e) => {
             eprintln!("Error getting companies: {}", e);
@@ -175,7 +175,7 @@ pub async fn get(
         }
     };
 
-    let (mut franschises) = match get_product_franschises(&pool, &redis_pool, product_id).await {
+    let (franschises) = match get_product_franschises(&pool, &redis_pool, product_id).await {
         Ok(data) => data,
         Err(e) => {
             eprintln!("Error getting franschises: {}", e);
