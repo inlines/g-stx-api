@@ -116,6 +116,7 @@ async fn main() -> io::Result<()> {
             .service(web::resource("/ws/{login}").to(chat::chat_ws))
     })
     .bind("0.0.0.0:9090")?
+    .workers(8)
     .run()
     .await
 }
