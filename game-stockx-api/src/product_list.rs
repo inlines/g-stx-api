@@ -92,7 +92,7 @@ pub async fn list(
             FROM product_platforms pp 
             WHERE pp.product_id = p.id
                 AND pp.platform_id = $4
-                AND ($6 = false OR pp.digital_only = false)
+                AND ($5 = false OR pp.digital_only = false)
         )
         AND (
             p.name ILIKE $3 
