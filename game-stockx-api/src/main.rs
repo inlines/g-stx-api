@@ -10,11 +10,11 @@ use dotenv::dotenv;
 
 use actix_cors::Cors;
 use actix_web::{middleware, App, HttpServer, web, http};
+use actix_governor::{Governor, GovernorConfigBuilder};
 use diesel::r2d2::ConnectionManager;
 use diesel::PgConnection;
 use r2d2::{Pool, PooledConnection};
 use crate::redis::{create_redis_pool};
-
 
 use actix::prelude::*;
 
@@ -37,11 +37,19 @@ pub type DBPool = Pool<ConnectionManager<PgConnection>>;
 pub type DBPooledConnection = PooledConnection<ConnectionManager<PgConnection>>;
 use metrics_middleware::MetricsMiddleware;
 
-
 #[actix_web::main]
 async fn main() -> io::Result<()> {
     dotenv().ok();
     env_logger::init_from_env(env_logger::Env::default().default_filter_or("actix_web=debug,actix_server=info"));
+
+    // Настройка rate limiting
+    let governor_conf = GovernorConfigBuilder::default()
+        // Ограничение: 100 запросов в секунду на IP
+        .per_second(100)
+        // Бурст до 50 одновременных запросов
+        .burst_size(50)
+        .finish()
+        .unwrap();
 
     // Загрузка данных для подключения к базе данных
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
@@ -67,8 +75,9 @@ async fn main() -> io::Result<()> {
     // Запуск HTTP-сервера
     HttpServer::new(move || {
         App::new()
+            // Rate limiting middleware - применяется ко всем запросам
+            .wrap(Governor::new(&governor_conf))
             .wrap(MetricsMiddleware)
-            //.wrap(prometheus.clone())
             .service(metrics_endpoint)
             .app_data(web::Data::new(redis_pool.clone()))
             .app_data(web::Data::new(pool.clone()))  // Передаем пул базы данных
