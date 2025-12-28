@@ -66,7 +66,7 @@ async fn main() -> io::Result<()> {
     let chat_server_data = web::Data::new(chat_server);
     let rate_limiter = GovernorRateLimiter::new(
         None,  // Нет глобального лимита
-        NonZeroU32::new(10),  // 10 запросов в секунду на IP
+        NonZeroU32::new(20),  // 10 запросов в секунду на IP
         vec![
             "/ws/",        // WebSocket
             "/metrics",    // Метрики
