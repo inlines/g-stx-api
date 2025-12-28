@@ -1,6 +1,6 @@
 use actix_web::{
     dev::{Service, ServiceRequest, ServiceResponse, Transform},
-    Error, HttpResponse,
+    Error,
 };
 use futures_util::future::{LocalBoxFuture, Ready};
 use governor::{
@@ -8,7 +8,7 @@ use governor::{
     middleware::NoOpMiddleware,
     state::{InMemoryState, NotKeyed},
     state::keyed::DashMapStateStore,
-    Quota, RateLimiter, RateLimiter as KeyedRateLimiter,
+    Quota, RateLimiter,
 };
 use std::{
     future::Future,
@@ -21,7 +21,7 @@ use std::{
 
 pub struct GovernorRateLimiter {
     global_limiter: Option<Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware>>>,
-    keyed_limiter: Option<Arc<KeyedRateLimiter<String, DashMapStateStore<String>, DefaultClock, NoOpMiddleware>>>,
+    keyed_limiter: Option<Arc<RateLimiter<String, DashMapStateStore<String>, DefaultClock, NoOpMiddleware>>>,
     whitelist_paths: Vec<String>,
 }
 
@@ -32,13 +32,15 @@ impl GovernorRateLimiter {
         whitelist_paths: Vec<&str>,
     ) -> Self {
         let global_limiter = global_quota.map(|quota| {
-            let quota = Quota::per_second(quota).allow_burst(quota);
+            // Строгий лимит без burst
+            let quota = Quota::per_second(quota);
             Arc::new(RateLimiter::direct(quota))
         });
 
         let keyed_limiter = per_ip_quota.map(|quota| {
-            let quota = Quota::per_second(quota).allow_burst(quota);
-            Arc::new(KeyedRateLimiter::dashmap(quota))
+            // Строгий лимит без burst
+            let quota = Quota::per_second(quota);
+            Arc::new(RateLimiter::dashmap(quota))
         });
 
         Self {
@@ -59,13 +61,31 @@ impl GovernorRateLimiter {
         )
     }
     
-    // Простой конструктор для быстрого использования
-    pub fn per_ip(requests_per_second: u32) -> Self {
+    // Строгий лимит (без burst)
+    pub fn per_ip_strict(requests_per_second: u32) -> Self {
         Self::new(
             None,
             NonZeroU32::new(requests_per_second),
             vec!["/ws/", "/metrics", "/health", "/favicon.ico"],
         )
+    }
+    
+    // С burst
+    pub fn per_ip_with_burst(requests_per_second: u32, burst_size: u32) -> Self {
+        let per_ip_quota = NonZeroU32::new(requests_per_second);
+        let burst = NonZeroU32::new(burst_size).unwrap_or_else(|| per_ip_quota.unwrap());
+        
+        let keyed_limiter = per_ip_quota.map(|quota| {
+            let quota = Quota::per_second(quota).allow_burst(burst);
+            Arc::new(RateLimiter::dashmap(quota))
+        });
+
+        Self {
+            global_limiter: None,
+            keyed_limiter,
+            whitelist_paths: vec!["/ws/", "/metrics", "/health", "/favicon.ico"]
+                .iter().map(|s| s.to_string()).collect(),
+        }
     }
 }
 
@@ -104,7 +124,7 @@ where
 pub struct GovernorMiddleware<S> {
     service: Rc<S>,
     global_limiter: Option<Arc<RateLimiter<NotKeyed, InMemoryState, DefaultClock, NoOpMiddleware>>>,
-    keyed_limiter: Option<Arc<KeyedRateLimiter<String, DashMapStateStore<String>, DefaultClock, NoOpMiddleware>>>,
+    keyed_limiter: Option<Arc<RateLimiter<String, DashMapStateStore<String>, DefaultClock, NoOpMiddleware>>>,
     whitelist_paths: Vec<String>,
 }
 
@@ -146,13 +166,16 @@ where
     fn call(&self, req: ServiceRequest) -> Self::Future {
         let path = req.path();
         
+        // ДОБАВЬТЕ ОТЛАДОЧНЫЙ ВЫВОД
+        log::debug!("Rate limit check for path: {}", path);
+        
         // Проверяем, не в whitelist ли путь
         let should_limit = !self.whitelist_paths.iter().any(|whitelist_path| {
             path.starts_with(whitelist_path)
         });
 
         if !should_limit {
-            // Путь в whitelist - пропускаем без проверки
+            log::debug!("Path {} is whitelisted, skipping rate limit", path);
             let service = Rc::clone(&self.service);
             return Box::pin(async move {
                 service.call(req).await
@@ -166,6 +189,8 @@ where
         let service = Rc::clone(&self.service);
         
         Box::pin(async move {
+            log::debug!("Checking rate limit for IP: {}", ip);
+            
             // 1. Проверка глобального лимита - НЕМЕДЛЕННЫЙ возврат 429 при превышении
             if let Some(limiter) = global_limiter {
                 if let Err(not_until) = limiter.check() {
@@ -175,14 +200,9 @@ where
                     
                     log::warn!("Global rate limit exceeded. Required wait: {:?}", wait_time);
                     
-                    // Возвращаем кастомный HttpResponse с ошибкой 429
-                    let http_response = HttpResponse::TooManyRequests()
-                        .insert_header(("Retry-After", wait_seconds.to_string()))
-                        .body("Global rate limit exceeded. Please try again later.");
-                    
-                    return Err(Error::from(actix_web::error::InternalError::from_response(
-                        "",
-                        http_response
+                    return Err(actix_web::error::ErrorTooManyRequests(format!(
+                        "Global rate limit exceeded. Please try again in {} seconds.",
+                        wait_seconds
                     )));
                 }
             }
@@ -196,17 +216,14 @@ where
                     
                     log::warn!("Rate limit exceeded for IP: {}. Required wait: {:?}", ip, wait_time);
                     
-                    // Возвращаем кастомный HttpResponse с ошибкой 429
-                    let http_response = HttpResponse::TooManyRequests()
-                        .insert_header(("Retry-After", wait_seconds.to_string()))
-                        .body("Rate limit exceeded. Please try again later.");
-                    
-                    return Err(Error::from(actix_web::error::InternalError::from_response(
-                        "",
-                        http_response
+                    return Err(actix_web::error::ErrorTooManyRequests(format!(
+                        "Rate limit exceeded. Please try again in {} seconds.",
+                        wait_seconds
                     )));
                 }
             }
+            
+            log::debug!("Rate limit check passed for IP: {}", ip);
             
             // Все проверки пройдены - пропускаем запрос дальше
             service.call(req).await
