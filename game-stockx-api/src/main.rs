@@ -5,7 +5,7 @@ extern crate lazy_static;
 #[macro_use]
 extern crate prometheus;
 
-use std::{env, io};
+use std::{env, io, num::NonZeroU32};
 use dotenv::dotenv;
 
 use actix_cors::Cors;
@@ -35,7 +35,7 @@ mod simple_rate_limiter;
 pub type DBPool = Pool<ConnectionManager<PgConnection>>;
 pub type DBPooledConnection = PooledConnection<ConnectionManager<PgConnection>>;
 use metrics_middleware::MetricsMiddleware;
-use simple_rate_limiter::SimpleRateLimiter;
+use simple_rate_limiter::GovernorRateLimiter;
 
 #[actix_web::main]
 async fn main() -> io::Result<()> {
@@ -64,12 +64,23 @@ async fn main() -> io::Result<()> {
     // Создание серверного экземпляра ChatServer
     let chat_server = chat::ChatServer::new(pool.clone()).start();
     let chat_server_data = web::Data::new(chat_server);
+    let rate_limiter = GovernorRateLimiter::new(
+        None,  // Нет глобального лимита
+        NonZeroU32::new(10),  // 10 запросов в секунду на IP
+        vec![
+            "/ws/",        // WebSocket
+            "/metrics",    // Метрики
+            "/health",     // Health check (если есть)
+            "/favicon.ico",
+            // Добавьте другие пути, которые не должны ограничиваться
+        ],
+    );
 
     // Запуск HTTP-сервера
     HttpServer::new(move || {
         App::new()
             // Rate limiting middleware - применяется ко всем запросам
-            .wrap(SimpleRateLimiter::new(100))
+            .wrap(rate_limiter.clone())
             .wrap(MetricsMiddleware)
             .service(metrics_endpoint)
             .app_data(web::Data::new(redis_pool.clone()))
