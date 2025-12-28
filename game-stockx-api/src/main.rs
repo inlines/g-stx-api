@@ -13,9 +13,9 @@ use actix_web::{middleware, App, HttpServer, web, http};
 use diesel::r2d2::ConnectionManager;
 use diesel::PgConnection;
 use r2d2::{Pool, PooledConnection};
-use crate::redis::{create_redis_pool};
 
 use actix::prelude::*;
+
 mod constants;
 mod product_list;
 mod product_details;
@@ -32,17 +32,18 @@ mod metrics;
 mod metrics_middleware;
 mod simple_rate_limiter;
 
+use crate::simple_rate_limiter::GovernorRateLimiter;
+use crate::metrics::metrics_endpoint;
+use crate::metrics_middleware::MetricsMiddleware;
+use crate::redis::create_redis_pool;
+
 pub type DBPool = Pool<ConnectionManager<PgConnection>>;
 pub type DBPooledConnection = PooledConnection<ConnectionManager<PgConnection>>;
-use metrics_middleware::MetricsMiddleware;
-use simple_rate_limiter::GovernorRateLimiter;
 
 #[actix_web::main]
 async fn main() -> io::Result<()> {
     dotenv().ok();
     env_logger::init_from_env(env_logger::Env::default().default_filter_or("actix_web=debug,actix_server=info"));
-
-    // Настройка rate limiting
 
     // Загрузка данных для подключения к базе данных
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
@@ -59,20 +60,20 @@ async fn main() -> io::Result<()> {
         .await
         .expect("Failed to create Redis pool");
 
-    use crate::metrics::metrics_endpoint;
-
     // Создание серверного экземпляра ChatServer
     let chat_server = chat::ChatServer::new(pool.clone()).start();
     let chat_server_data = web::Data::new(chat_server);
-    let rate_limiter = GovernorRateLimiter::new(
-        None,  // Нет глобального лимита
-        NonZeroU32::new(20),  // 10 запросов в секунду на IP
+    
+    // Настройка rate limiting - исправленные параметры
+    let rate_limiter = GovernorRateLimiter::per_ip_with_whitelist(
+        20, // 20 запросов в секунду
         vec![
-            "/ws/",        // WebSocket
-            "/metrics",    // Метрики
-            "/health",     // Health check (если есть)
+            "/ws/",
+            "/metrics",
+            "/health",
             "/favicon.ico",
-            // Добавьте другие пути, которые не должны ограничиваться
+            "/static/",
+            "/api/docs",
         ],
     );
 
@@ -84,7 +85,7 @@ async fn main() -> io::Result<()> {
             .wrap(MetricsMiddleware)
             .service(metrics_endpoint)
             .app_data(web::Data::new(redis_pool.clone()))
-            .app_data(web::Data::new(pool.clone()))  // Передаем пул базы данных
+            .app_data(web::Data::new(pool.clone()))
             .app_data(chat_server_data.clone())
             .wrap(middleware::Logger::default())
             .wrap(
