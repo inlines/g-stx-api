@@ -52,7 +52,7 @@ fn build_cache_key(cat: i64, limit: i64, offset: i64, query: &str, ignore_digita
 #[get("/products")]
 pub async fn list(
     pool: Data<DBPool>,
-  //  redis_pool: Data<RedisPool>,
+    // redis_pool: Data<RedisPool>,
     query: web::Query<Pagination>
 ) -> HttpResponse {
     let limit = query.limit.unwrap_or(100);
@@ -60,6 +60,7 @@ pub async fn list(
     let cat = query.cat;
     let text_query = query.query.clone().unwrap_or_default();
     let ignore_digital = query.ignore_digital.unwrap_or(false);
+    let sort = query.sort.clone().unwrap_or_default();
 
     let cache_key = build_cache_key(cat, limit, offset, &text_query, ignore_digital);
 
@@ -79,52 +80,72 @@ pub async fn list(
 
     let db_text_query = format!("%{}%", text_query);
 
-    let mut base_query = String::from(r#"
+
+    let (order_column, order_direction, nulls_order) = match sort.as_str() {
+        "date" => ("p.first_release_date", "ASC", "NULLS LAST"),
+        "name" | _ => ("p.name", "ASC", "NULLS LAST"),
+    };
+
+    let sql = format!(
+        r#"
         SELECT 
-        prod.id AS id,
-        prod.name AS name,
-        prod.first_release_date AS first_release_date,
-        '//89.104.66.193/static/covers-full/' || cov.id || '.jpg' AS image_url
-        FROM products AS prod
-        LEFT JOIN covers AS cov ON prod.cover_id = cov.id
-        WHERE prod.id IN (
-            SELECT DISTINCT prod.id
-            FROM product_platforms AS pp
-            INNER JOIN products AS prod ON pp.product_id = prod.id
-            LEFT JOIN alternative_names as an on an.product_id = prod.id
-            WHERE pp.platform_id = $4 
-                AND (prod.name ILIKE $3 OR an.name ILIKE $3)
-    "#);
+            p.id AS id,
+            p.name AS name,
+            p.first_release_date AS first_release_date,
+            '//89.104.66.193/static/covers-full/' || c.id || '.jpg' AS image_url
+        FROM products p
+        LEFT JOIN covers c ON p.cover_id = c.id
+        WHERE EXISTS (
+            SELECT 1 
+            FROM product_platforms pp 
+            WHERE pp.product_id = p.id
+                AND pp.platform_id = $4
+                AND ($5 = false OR pp.digital_only = false)
+        )
+        AND (
+            p.name ILIKE $3 
+            OR EXISTS (
+                SELECT 1 FROM alternative_names an
+                WHERE an.product_id = p.id AND an.name ILIKE $3
+            )
+        )
+        ORDER BY {} {} {}, p.id ASC
+        LIMIT $1 OFFSET $2
+        "#,
+        order_column, order_direction, nulls_order
+    );
 
-    if ignore_digital {
-        base_query.push_str(" AND pp.digital_only = false");
-    }
-
-    base_query.push_str(")");
-
-    base_query.push_str(" ORDER BY prod.name ASC LIMIT $1 OFFSET $2");
-
-    let results = diesel::sql_query(base_query)
+    let results = diesel::sql_query(sql)
         .bind::<diesel::sql_types::BigInt, _>(limit)
         .bind::<diesel::sql_types::BigInt, _>(offset)
         .bind::<diesel::sql_types::Text, _>(db_text_query.clone())
         .bind::<diesel::sql_types::BigInt, _>(cat)
+        .bind::<diesel::sql_types::Bool, _>(ignore_digital)
         .load::<ProductListItem>(conn);
 
-    let mut count_query = String::from(r#"
-        SELECT COUNT(*) as total
-        FROM product_platforms AS pp
-        INNER JOIN products AS prod ON pp.product_id = prod.id
-        WHERE pp.platform_id = $1 AND prod.name ILIKE $2
-    "#);
+    let count_sql = r#"
+        SELECT COUNT(DISTINCT p.id) as total
+        FROM products p
+        WHERE EXISTS (
+            SELECT 1 
+            FROM product_platforms pp 
+            WHERE pp.product_id = p.id
+                AND pp.platform_id = $1
+                AND ($3 = false OR pp.digital_only = false)
+        )
+        AND (
+            p.name ILIKE $2
+            OR EXISTS (
+                SELECT 1 FROM alternative_names an
+                WHERE an.product_id = p.id AND an.name ILIKE $2
+            )
+        )
+    "#;
 
-    if ignore_digital {
-        count_query.push_str(" AND pp.digital_only = false");
-    }
-
-    let count_result = diesel::sql_query(count_query)
+    let count_result = diesel::sql_query(count_sql)
         .bind::<diesel::sql_types::BigInt, _>(cat)
         .bind::<diesel::sql_types::Text, _>(db_text_query)
+        .bind::<diesel::sql_types::Bool, _>(ignore_digital)
         .load::<CountResult>(conn);
 
     match (results, count_result) {
