@@ -42,10 +42,10 @@ pub struct ProductListResponse {
     total_count: i64,
 }
 
-fn build_cache_key(cat: i64, limit: i64, offset: i64, query: &str, ignore_digital: bool) -> String {
+fn build_cache_key(cat: i64, limit: i64, offset: i64, query: &str, ignore_digital: bool, sort: &str) -> String {
     format!(
-        "products:cat_{}:limit_{}:offset_{}:q_{}:dig_{}",
-        cat, limit, offset, query, ignore_digital
+        "products:cat_{}:limit_{}:offset_{}:q_{}:dig_{}:sort_{}",
+        cat, limit, offset, query, ignore_digital, sort
     )
 }
 
@@ -62,7 +62,7 @@ pub async fn list(
     let ignore_digital = query.ignore_digital.unwrap_or(false);
     let sort = query.sort.clone().unwrap_or_default();
 
-    let cache_key = build_cache_key(cat, limit, offset, &text_query, ignore_digital);
+    let cache_key = build_cache_key(cat, limit, offset, &text_query, ignore_digital, &sort);
 
     if let Ok(mut redis_conn) = redis_pool.get().await {
         if let Ok(Some(cached)) = redis_conn.get_json::<ProductListResponse>(&cache_key).await {
