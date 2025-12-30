@@ -60,6 +60,7 @@ pub async fn list(
     let cat = query.cat;
     let text_query = query.query.clone().unwrap_or_default();
     let ignore_digital = query.ignore_digital.unwrap_or(false);
+    let sort = query.sort.clone().unwrap_or_default();
 
     let cache_key = build_cache_key(cat, limit, offset, &text_query, ignore_digital);
 
@@ -78,6 +79,11 @@ pub async fn list(
     };
 
     let db_text_query = format!("%{}%", text_query);
+
+    let (order_column, order_direction, nulls_order) = match sort.as_str() {
+        "date" => ("p.first_release_date", "ASC", "NULLS LAST"),
+        "name" | _ => ("p.name", "ASC", "NULLS LAST"),
+    };
 
     let sql = r#"
         SELECT 
@@ -101,7 +107,7 @@ pub async fn list(
                 WHERE an.product_id = p.id AND an.name ILIKE $3
             )
         )
-        ORDER BY p.name ASC, p.id ASC
+        ORDER BY {} {} {}, p.id ASC
         LIMIT $1 OFFSET $2
     "#;
 
