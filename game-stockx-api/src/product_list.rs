@@ -85,7 +85,8 @@ pub async fn list(
         "name" | _ => ("p.name", "ASC", "NULLS LAST"),
     };
 
-    let sql = r#"
+    let sql = format!(
+        r#"
         SELECT 
             p.id AS id,
             p.name AS name,
@@ -109,7 +110,9 @@ pub async fn list(
         )
         ORDER BY {} {} {}, p.id ASC
         LIMIT $1 OFFSET $2
-    "#;
+        "#,
+        order_column, order_direction, nulls_order
+    );
 
     let results = diesel::sql_query(sql)
         .bind::<diesel::sql_types::BigInt, _>(limit)
