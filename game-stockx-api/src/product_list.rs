@@ -1,19 +1,11 @@
 use diesel::prelude::*;
 use actix_web::web::{self, Data};
 use actix_web::HttpResponse;
-use diesel::sql_types::{Integer, Text, Nullable, BigInt};
+use diesel::sql_types::{BigInt, Double, Integer, Nullable, Text};
 use diesel::{RunQueryDsl};
 use serde::{Deserialize, Serialize};
 use crate::pagination::Pagination;
 use crate::{DBPool, redis::{RedisPool, RedisCacheExt}};
-
-#[derive(Debug, Deserialize, Serialize)]
-pub struct Product {
-    pub id: u32,
-    pub cover: String,
-    pub first_release_date: String,
-    pub name: String,
-}
 
 #[derive(Debug, Deserialize, Serialize, QueryableByName)]
 pub struct ProductListItem {
@@ -28,6 +20,15 @@ pub struct ProductListItem {
 
     #[diesel(sql_type = Nullable<Text>)]
     pub image_url: Option<String>,
+
+    #[diesel(sql_type = Nullable<Integer>)]
+    pub parent_game: Option<i32>,
+
+    #[diesel(sql_type = Nullable<Integer>)]
+    pub game_type: Option<i32>,
+
+    #[diesel(sql_type = Nullable<Double>)]
+    pub total_rating: Option<f64>,
 }
 
 #[derive(QueryableByName)]
@@ -91,6 +92,9 @@ pub async fn list(
             p.id AS id,
             p.name AS name,
             p.first_release_date AS first_release_date,
+            p.total_rating,
+            p.game_type,
+            p.parent_game,
             '//89.104.66.193/static/covers-full/' || c.id || '.jpg' AS image_url
         FROM products p
         LEFT JOIN covers c ON p.cover_id = c.id
