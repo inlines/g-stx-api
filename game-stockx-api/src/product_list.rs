@@ -1,7 +1,7 @@
 use diesel::prelude::*;
 use actix_web::web::{self, Data};
 use actix_web::HttpResponse;
-use diesel::sql_types::{Integer, Text, Nullable, BigInt};
+use diesel::sql_types::{BigInt, Double, Integer, Nullable, Text};
 use diesel::{RunQueryDsl};
 use serde::{Deserialize, Serialize};
 use crate::pagination::Pagination;
@@ -28,6 +28,15 @@ pub struct ProductListItem {
 
     #[diesel(sql_type = Nullable<Text>)]
     pub image_url: Option<String>,
+
+    #[diesel(sql_type = Nullable<Integer>)]
+    pub parent_game: Option<i32>,
+
+    #[diesel(sql_type = Nullable<Integer>)]
+    pub game_type: Option<i32>,
+
+    #[diesel(sql_type = Nullable<Double>)]
+    pub total_rating: Option<f64>,
 }
 
 #[derive(QueryableByName)]
@@ -92,6 +101,9 @@ pub async fn list(
             p.id AS id,
             p.name AS name,
             p.first_release_date AS first_release_date,
+            p.total_rating,
+            p.game_type,
+            p.parent_game,
             '//89.104.66.193/static/covers-full/' || c.id || '.jpg' AS image_url
         FROM products p
         LEFT JOIN covers c ON p.cover_id = c.id
@@ -109,6 +121,7 @@ pub async fn list(
                 WHERE an.product_id = p.id AND an.name ILIKE $3
             )
         )
+        AND (p.game_type NOT IN (1, 2, 4) OR p.game_type IS NULL)
         ORDER BY {} {} {}, p.id ASC
         LIMIT $1 OFFSET $2
         "#,
@@ -140,6 +153,7 @@ pub async fn list(
                 WHERE an.product_id = p.id AND an.name ILIKE $2
             )
         )
+        AND (p.game_type NOT IN (1, 2, 4) OR p.game_type IS NULL)
     "#;
 
     let count_result = diesel::sql_query(count_sql)
