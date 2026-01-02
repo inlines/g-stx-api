@@ -1,0 +1,10 @@
+CREATE TABLE IF NOT EXISTS franschises (
+    id  INTEGER PRIMARY KEY NOT NULL,
+    name  TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS game_franschises (
+    franschise_id  INTEGER REFERENCES franschises(id) ON DELETE CASCADE NOT NULL,
+    product_id  INTEGER REFERENCES products(id) ON DELETE CASCADE NOT NULL,
+    PRIMARY KEY (franschise_id, product_id)
+);

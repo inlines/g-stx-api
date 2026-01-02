@@ -1,0 +1,7 @@
+DROP TABLE IF EXISTS game_bundles CASCADE;
+
+DROP TABLE IF EXISTS game_dlcs CASCADE;
+
+ALTER TABLE products DROP COLUMN IF EXISTS parent_game;
+ALTER TABLE products DROP COLUMN IF EXISTS game_type;
+ALTER TABLE products DROP COLUMN IF EXISTS total_rating;
