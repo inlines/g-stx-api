@@ -1,0 +1,1 @@
+ALTER TABLE users_have_releases DROP COLUMN product_id;

@@ -1,0 +1,1 @@
+ALTER TABLE users_have_releases ADD COLUMN product_id INTEGER NULL DEFAULT NULL;

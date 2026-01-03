@@ -12,6 +12,7 @@ use crate::pagination::Pagination;
 #[derive(Deserialize)]
 struct TrackReleaseRequest {
     release_id: i32,
+    product_id: Option<i32>,
     price: Option<i32>
 }
 
@@ -65,12 +66,12 @@ struct CollectionStats {
 
     #[sql_type = "diesel::sql_types::BigInt"]
     have_count: i64,
-    
-    #[sql_type = "diesel::sql_types::BigInt"]
-    have_games: i64,
 
     #[sql_type = "diesel::sql_types::Array<diesel::sql_types::Integer>"]
     have_ids: Vec<i32>,
+
+    #[sql_type = "diesel::sql_types::Array<diesel::sql_types::Integer>"]
+    have_prod_ids: Vec<i32>,
 
     #[sql_type = "diesel::sql_types::BigInt"]
     wish_count: i64,
@@ -119,12 +120,7 @@ async fn get_collection_stats(pool: web::Data<DBPool>, req: HttpRequest) -> Http
 
         COALESCE(h.release_count, 0) AS have_count,
         COALESCE(h.release_ids, ARRAY[]::int[]) AS have_ids,
-
-		(
-	        SELECT COUNT(DISTINCT r.product_id)
-	        FROM unnest(COALESCE(h.release_ids, ARRAY[]::int[])) AS rel_id
-	        JOIN releases r ON r.id = rel_id
-	    ) AS have_games,
+        COALESCE(h.product_ids, ARRAY[]::int[]) AS have_prod_ids,
 
         COALESCE(w.release_count, 0) AS wish_count,
         COALESCE(w.release_ids, ARRAY[]::int[]) AS wish_ids,
@@ -143,7 +139,8 @@ async fn get_collection_stats(pool: web::Data<DBPool>, req: HttpRequest) -> Http
             SELECT 
             r.platform,
             COUNT(uhr.release_id) AS release_count,
-            ARRAY_AGG(uhr.release_id) AS release_ids
+            ARRAY_AGG(uhr.release_id) AS release_ids,
+            ARRAY_AGG(uhr.product_id) AS product_ids
             FROM users_have_releases AS uhr
             JOIN releases AS r ON uhr.release_id = r.id
             WHERE uhr.user_login = $1
@@ -446,8 +443,8 @@ async fn add_release(
     let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
 
     let insert_query = r#"
-        INSERT INTO users_have_releases (release_id, user_login, price)
-        VALUES ($1, $2, $3)
+        INSERT INTO users_have_releases (release_id, user_login, price, product_id)
+        VALUES ($1, $2, $3, $4)
         ON CONFLICT DO NOTHING
     "#;
 
@@ -455,6 +452,7 @@ async fn add_release(
         .bind::<Integer, _>(data.release_id)
         .bind::<Text, _>(&user_login)
         .bind::<Nullable<Integer>, _>(data.price)
+        .bind::<Nullable<Integer>, _>(data.product_id)
         .execute(conn);
 
     match result {
