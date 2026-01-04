@@ -164,6 +164,7 @@ diesel::table! {
         release_id -> Int4,
         user_login -> Text,
         price -> Nullable<Int4>,
+        product_id -> Nullable<Int4>,
     }
 }
 

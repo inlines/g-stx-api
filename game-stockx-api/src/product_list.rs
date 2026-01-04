@@ -121,7 +121,7 @@ pub async fn list(
                 WHERE an.product_id = p.id AND an.name ILIKE $3
             )
         )
-        AND (p.game_type NOT IN (1, 2, 4) OR p.game_type IS NULL)
+        AND p.parent_game IS NULL AND (p.game_type NOT IN (1, 2, 4, 13, 6, 5) OR p.game_type IS NULL)
         ORDER BY {} {} {}, p.id ASC
         LIMIT $1 OFFSET $2
         "#,
@@ -153,7 +153,8 @@ pub async fn list(
                 WHERE an.product_id = p.id AND an.name ILIKE $2
             )
         )
-        AND (p.game_type NOT IN (1, 2, 4) OR p.game_type IS NULL)
+        AND p.parent_game IS NULL
+        AND (p.game_type NOT IN (1, 2, 4, 13, 6, 5) OR p.game_type IS NULL)
     "#;
 
     let count_result = diesel::sql_query(count_sql)
