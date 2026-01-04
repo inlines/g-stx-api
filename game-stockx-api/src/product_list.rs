@@ -1,11 +1,13 @@
+use actix_web::http::header;
 use diesel::prelude::*;
 use actix_web::web::{self, Data};
-use actix_web::HttpResponse;
+use actix_web::{HttpResponse, HttpRequest};
 use diesel::sql_types::{BigInt, Double, Integer, Nullable, Text};
 use diesel::{RunQueryDsl};
 use serde::{Deserialize, Serialize};
 use crate::pagination::Pagination;
 use crate::{DBPool, redis::{RedisPool, RedisCacheExt}};
+use crate::auth::{verify_jwt};
 
 #[derive(Debug, Deserialize, Serialize, QueryableByName)]
 pub struct ProductListItem {
@@ -50,11 +52,25 @@ fn build_cache_key(cat: i64, limit: i64, offset: i64, query: &str, ignore_digita
     )
 }
 
+// Функция для извлечения токена из заголовков
+fn extract_token(req: &HttpRequest) -> Option<&str> {
+    req.headers().get(header::AUTHORIZATION)
+        .and_then(|header_value| header_value.to_str().ok())
+        .and_then(|header_str| {
+            if header_str.starts_with("Bearer ") {
+                Some(&header_str[7..])
+            } else {
+                None
+            }
+        })
+}
+
 #[get("/products")]
 pub async fn list(
     pool: Data<DBPool>,
     redis_pool: Data<RedisPool>,
-    query: web::Query<Pagination>
+    query: web::Query<Pagination>,
+    req: HttpRequest
 ) -> HttpResponse {
     let limit = query.limit.unwrap_or(100);
     let offset = query.offset.unwrap_or(0);
@@ -62,6 +78,23 @@ pub async fn list(
     let text_query = query.query.clone().unwrap_or_default();
     let ignore_digital = query.ignore_digital.unwrap_or(false);
     let sort = query.sort.clone().unwrap_or_default();
+
+
+    if limit > 20 || offset > 20 {
+        // Извлекаем токен из заголовка
+        let token = extract_token(&req);
+        
+        // Проверяем JWT токен
+        let claims = match token.and_then(|t| verify_jwt(t)) {
+            Some(c) => c,
+            None => return HttpResponse::Unauthorized().body("Invalid or missing token. Authorization required for large queries."),
+        };
+        
+        // Здесь можно добавить дополнительную проверку claims, если нужно
+        // Например, проверку роли пользователя, срока действия токена и т.д.
+    }
+
+
 
     let cache_key = build_cache_key(cat, limit, offset, &text_query, ignore_digital, &sort);
 
