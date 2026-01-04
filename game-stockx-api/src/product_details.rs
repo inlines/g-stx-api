@@ -98,7 +98,6 @@ pub struct Franschise {
     pub total_games_count: i64,
 }
 
-
 #[derive(QueryableByName, Clone, Serialize, Deserialize)]
 struct ScreenshotUrl {
     #[diesel(sql_type = Text)]
@@ -130,6 +129,34 @@ fn build_product_franschises_cache_key(product_id: i32) -> String {
     format!("product_details:franschises:{}", product_id)
 }
 
+// Функция для извлечения и проверки токена
+fn extract_and_verify_token(req: &HttpRequest) -> Result<String, HttpResponse> {
+    let token = req
+        .headers()
+        .get(header::AUTHORIZATION)
+        .and_then(|h| h.to_str().ok())
+        .and_then(|token_str| {
+            if token_str.starts_with("Bearer ") {
+                Some(&token_str[7..])
+            } else {
+                None
+            }
+        });
+
+    match token {
+        Some(t) => {
+            verify_jwt(t)
+                .map(|claims| claims.sub)
+                .ok_or_else(|| {
+                    HttpResponse::Unauthorized()
+                        .body("Invalid or expired token")
+                })
+        }
+        None => Err(HttpResponse::Unauthorized()
+            .body("Authorization header is missing or malformed"))
+    }
+}
+
 #[get("/products/{id}")]
 pub async fn get(
     pool: Data<DBPool>,
@@ -139,17 +166,16 @@ pub async fn get(
 ) -> HttpResponse {
     let product_id = path.into_inner();
 
-    let user_login_opt = req
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|h| h.to_str().ok())
-        .and_then(|token| {
-            if token.starts_with("Bearer ") {
-                verify_jwt(&token[7..]).map(|claims| claims.sub)
-            } else {
-                None
-            }
-        });
+    // Пытаемся получить и верифицировать токен
+    let user_login_result = extract_and_verify_token(&req);
+    
+    let user_login_opt = match user_login_result {
+        Ok(login) => Some(login),
+        Err(resp) => {
+            // Если токен невалиден или отсутствует, возвращаем 401
+            return resp;
+        }
+    };
 
     let basic_info = match get_product_basic_info(&pool, &redis_pool, product_id).await {
         Ok(info) => info,
@@ -167,7 +193,7 @@ pub async fn get(
         }
     };
 
-    let (companies) = match get_product_companies(&pool, &redis_pool, product_id).await {
+    let companies = match get_product_companies(&pool, &redis_pool, product_id).await {
         Ok(data) => data,
         Err(e) => {
             eprintln!("Error getting companies: {}", e);
@@ -175,7 +201,7 @@ pub async fn get(
         }
     };
 
-    let (franschises) = match get_product_franschises(&pool, &redis_pool, product_id).await {
+    let franschises = match get_product_franschises(&pool, &redis_pool, product_id).await {
         Ok(data) => data,
         Err(e) => {
             eprintln!("Error getting franschises: {}", e);
@@ -183,6 +209,7 @@ pub async fn get(
         }
     };
 
+    // Если пользователь авторизован, скрываем его логин из bid_user_logins
     if let Some(login) = user_login_opt {
         for release in &mut releases {
             release.bid_user_logins.retain(|l| l != &login);
@@ -194,7 +221,7 @@ pub async fn get(
         releases,
         screenshots,
         companies,
-        franschises
+        franschises,
     })
 }
 
