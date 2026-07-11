@@ -53,12 +53,12 @@ async fn main() -> io::Result<()> {
         .expect("Failed to create pool");
 
     // Инициализация Redis
-    let redis_url = env::var("REDIS_URL")
-        .unwrap_or_else(|_| "redis://redis:6379".to_string());
+    // let redis_url = env::var("REDIS_URL")
+    //     .unwrap_or_else(|_| "redis://redis:6379".to_string());
     
-    let redis_pool = create_redis_pool(&redis_url)
-        .await
-        .expect("Failed to create Redis pool");
+    // let redis_pool = create_redis_pool(&redis_url)
+    //     .await
+    //     .expect("Failed to create Redis pool");
 
     // Создание серверного экземпляра ChatServer
     let chat_server = chat::ChatServer::new(pool.clone()).start();
@@ -84,7 +84,7 @@ async fn main() -> io::Result<()> {
             .wrap(rate_limiter.clone())
             .wrap(MetricsMiddleware)
             .service(metrics_endpoint)
-            .app_data(web::Data::new(redis_pool.clone()))
+            //.app_data(web::Data::new(redis_pool.clone()))
             .app_data(web::Data::new(pool.clone()))
             .app_data(chat_server_data.clone())
             .wrap(middleware::Logger::default())
@@ -120,7 +120,7 @@ async fn main() -> io::Result<()> {
             // Регистрация маршрута WebSocket для чата
             .service(web::resource("/ws/{login}").to(chat::chat_ws))
     })
-    .bind("0.0.0.0:9090")?
+    .bind("127.0.0.1:9090")?
     .workers(8)
     .run()
     .await
