@@ -14,7 +14,7 @@ def run(args, **kw):
 def port(container, number):
     return run(['docker', 'port', container, str(number)]).rsplit(':', 1)[1]
 
-def exercise(label, binary, pg, redis, W, franchises=False):
+def exercise(label, binary, pg, redis, W, franchises=False, companies=False):
     dbport = port(pg, 5432)
     redisport = port(redis, 6379)
 
@@ -89,6 +89,24 @@ def exercise(label, binary, pg, redis, W, franchises=False):
             assert request(base+'&franchise_id=42&query=Beta')[4]['total_count'] == 0
             assert request(base+'&franchise_id=42&offset=1')[4]['items'] == []
             assert request('/api/products?cat=167&limit=15&franchise_id=42')[4]['total_count'] == 1
+        if companies:
+            sql("INSERT INTO platforms(id,abbreviation,name,active,total_games) VALUES(167,'PS5','PlayStation 5',true,1) ON CONFLICT DO NOTHING; INSERT INTO product_platforms(product_id,platform_id) VALUES(2,167); INSERT INTO companies(id,name) VALUES(42,'Studio'),(43,'Other studio'),(44,'Empty studio'); INSERT INTO products(id,name,summary) VALUES(3,'Port only',''); INSERT INTO product_platforms(product_id,platform_id) VALUES(3,48); INSERT INTO involved_companies(id,company,game,developer,publisher,porting) VALUES(1001,42,1,true,true,false),(1002,42,2,false,true,false),(1003,42,1,true,false,false),(1004,43,2,true,false,false),(1005,42,3,false,false,true);")
+            metadata = request('/api/companies/42', auth=False)
+            assert metadata[2] == 200 and metadata[4] == {'id':42,'name':'Studio','developer_platform_ids':([48,167] if franchises else [48]),'publisher_platform_ids':[48,167]}, metadata
+            assert request('/api/companies/999', auth=False)[2] == 404
+            assert request('/api/companies/44', auth=False)[4]['developer_platform_ids'] == []
+            base = '/api/products?cat=48&limit=15&sort=name&ignore_digital=false'
+            developer = request(base+'&company_id=42&company_role=developer')
+            publisher = request(base+'&company_id=42&company_role=publisher')
+            assert developer[2] == 200 and developer[4]['total_count'] == 1 and [x['id'] for x in developer[4]['items']] == [1], developer
+            assert publisher[2] == 200 and publisher[4]['total_count'] == 2 and [x['id'] for x in publisher[4]['items']] == [1,2], publisher
+            assert request(base+'&company_id=42&company_role=developer')[4] == developer[4]
+            assert request(base+'&company_id=43&company_role=developer')[4]['items'][0]['id'] == 2
+            assert request(base+'&company_id=42&company_role=developer&query=Beta')[4]['total_count'] == 0
+            assert request(base+'&company_id=42&company_role=publisher&offset=1')[4]['items'][0]['id'] == 2
+            assert request('/api/products?cat=167&limit=15&company_id=42&company_role=publisher')[4]['total_count'] == 1
+            assert request('/api/products?cat=167&limit=15&company_id=42&company_role=developer')[4]['total_count'] == (1 if franchises else 0)
+            assert request(base+'&company_id=42&company_role=invalid')[2] == 400
         request('/api/login', {'user_login': 'alice', 'password': 'wrong'}, False)
         reads = ['/api/collection-stats', '/api/collection?cat=48', '/api/wishlist?cat=48', '/api/wts?cat=48', '/api/collectors', '/api/collectors/alice/wts', '/api/products/1', '/api/products/999', '/api/products?cat=48&limit=21', '/api/messages?companion=bob', '/api/dialogs']
         for path in reads:
@@ -136,6 +154,7 @@ if __name__ == '__main__':
     parser.add_argument('before', type=Path)
     parser.add_argument('after', type=Path)
     parser.add_argument('--franchises', action='store_true', help='Also verify franchise metadata, filters, pagination and cache isolation')
+    parser.add_argument('--companies', action='store_true', help='Verify company roles, metadata, pagination and cache isolation')
     args = parser.parse_args()
     suffix = uuid.uuid4().hex[:10]
     pg = 'gstx-contract-pg-' + suffix
@@ -153,8 +172,8 @@ if __name__ == '__main__':
         else:
             raise RuntimeError('Test PostgreSQL did not start')
         with tempfile.TemporaryDirectory(prefix='gstx-contract-') as tmp:
-            before = exercise('before', str(args.before.resolve()), pg, redis, Path(tmp), args.franchises)
-            after = exercise('after', str(args.after.resolve()), pg, redis, Path(tmp), args.franchises)
+            before = exercise('before', str(args.before.resolve()), pg, redis, Path(tmp), args.franchises, args.companies)
+            after = exercise('after', str(args.after.resolve()), pg, redis, Path(tmp), args.franchises, args.companies)
             differences = [(a, b) for a, b in zip(before, after) if a != b]
             if len(before) != len(after) or differences:
                 raise AssertionError(json.dumps(differences, ensure_ascii=False, indent=2))

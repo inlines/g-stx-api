@@ -9,4 +9,6 @@ pub struct Pagination {
     pub sort: Option<String>,
     pub cat: i64,
     pub franchise_id: Option<i32>,
+    pub company_id: Option<i32>,
+    pub company_role: Option<String>,
 }

@@ -68,6 +68,10 @@ pub async fn list(
     query: web::Query<Pagination>,
     req: HttpRequest,
 ) -> HttpResponse {
+    let company_role = query.company_role.as_deref().unwrap_or("developer");
+    if !matches!(company_role, "developer" | "publisher") {
+        return HttpResponse::BadRequest().body("Invalid company role");
+    }
     let limit = query.limit.unwrap_or(100);
     let offset = query.offset.unwrap_or(0);
     let cat = query.cat;
@@ -92,6 +96,10 @@ pub async fn list(
     let mut cache_key = build_cache_key(cat, limit, offset, &text_query, ignore_digital, &sort);
     if let Some(id) = query.franchise_id {
         cache_key.push_str(&format!(":franchise_{id}"));
+    }
+
+    if let Some(id) = query.company_id {
+        cache_key.push_str(&format!(":company_{id}:role_{company_role}"));
     }
 
     if let Ok(mut redis_conn) = redis_pool.get().await
@@ -145,6 +153,11 @@ pub async fn list(
             SELECT 1 FROM game_franschises gf
             WHERE gf.product_id = p.id AND gf.franschise_id = $6
         ))
+        AND ($7::integer IS NULL OR EXISTS (
+            SELECT 1 FROM involved_companies ic
+            WHERE ic.game = p.id AND ic.company = $7
+              AND (($8 = 'developer' AND ic.developer = true) OR ($8 = 'publisher' AND ic.publisher = true))
+        ))
         AND (p.game_type NOT IN (1, 2, 4, 13, 6, 5) OR p.game_type IS NULL)
         ORDER BY {} {} {}, p.id ASC
         LIMIT $1 OFFSET $2
@@ -159,6 +172,8 @@ pub async fn list(
         .bind::<diesel::sql_types::BigInt, _>(cat)
         .bind::<diesel::sql_types::Bool, _>(ignore_digital)
         .bind::<Nullable<Integer>, _>(query.franchise_id)
+        .bind::<Nullable<Integer>, _>(query.company_id)
+        .bind::<Text, _>(company_role)
         .load::<ProductListItem>(conn);
 
     let count_sql = r#"
@@ -182,6 +197,11 @@ pub async fn list(
             SELECT 1 FROM game_franschises gf
             WHERE gf.product_id = p.id AND gf.franschise_id = $4
         ))
+        AND ($5::integer IS NULL OR EXISTS (
+            SELECT 1 FROM involved_companies ic
+            WHERE ic.game = p.id AND ic.company = $5
+              AND (($6 = 'developer' AND ic.developer = true) OR ($6 = 'publisher' AND ic.publisher = true))
+        ))
         AND (p.game_type NOT IN (1, 2, 4, 13, 6, 5) OR p.game_type IS NULL)
     "#;
 
@@ -190,6 +210,8 @@ pub async fn list(
         .bind::<diesel::sql_types::Text, _>(db_text_query)
         .bind::<diesel::sql_types::Bool, _>(ignore_digital)
         .bind::<Nullable<Integer>, _>(query.franchise_id)
+        .bind::<Nullable<Integer>, _>(query.company_id)
+        .bind::<Text, _>(company_role)
         .load::<CountResult>(conn);
 
     match (results, count_result) {
