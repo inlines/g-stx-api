@@ -162,15 +162,40 @@ pub struct ChatSession {
     pub addr: Addr<ChatServer>,
     disconnected: Arc<AtomicBool>,
     heartbeat: std::time::Instant,
+    authenticated: bool,
+}
+
+#[derive(Deserialize)]
+struct Authentication {
+    r#type: String,
+    token: String,
+}
+
+#[derive(Deserialize)]
+struct OutgoingMessage {
+    recipient: String,
+    body: String,
+}
+
+impl ChatSession {
+    fn reject(&self, ctx: &mut ws::WebsocketContext<Self>) {
+        ctx.close(Some(ws::CloseReason {
+            code: ws::CloseCode::Policy,
+            description: Some("Authentication required".into()),
+        }));
+        ctx.stop();
+    }
 }
 
 impl Actor for ChatSession {
     type Context = ws::WebsocketContext<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
-        self.addr.do_send(ChatCommand::Connect {
-            login: self.login.clone(),
-            addr: ctx.address().recipient(),
+        // A socket is not a user session until the first frame passes JWT validation.
+        ctx.run_later(std::time::Duration::from_secs(5), |session, ctx| {
+            if !session.authenticated {
+                session.reject(ctx);
+            }
         });
 
         ctx.run_interval(std::time::Duration::from_secs(30), |session, ctx| {
@@ -183,7 +208,7 @@ impl Actor for ChatSession {
     }
 
     fn stopped(&mut self, ctx: &mut Self::Context) {
-        if !self.disconnected.swap(true, Ordering::SeqCst) {
+        if self.authenticated && !self.disconnected.swap(true, Ordering::SeqCst) {
             self.addr.do_send(ChatCommand::Disconnect {
                 login: self.login.clone(),
                 addr: ctx.address().recipient(), // Передаем свой addr
@@ -196,9 +221,36 @@ impl StreamHandler<Result<ws::Message, ProtocolError>> for ChatSession {
     fn handle(&mut self, msg: Result<ws::Message, ProtocolError>, ctx: &mut Self::Context) {
         match msg {
             Ok(ws::Message::Text(text)) => {
-                if let Ok(parsed) = serde_json::from_str::<ClientMessage>(&text) {
+                if !self.authenticated {
+                    let claims = serde_json::from_str::<Authentication>(&text)
+                        .ok()
+                        .filter(|auth| auth.r#type == "authenticate")
+                        .and_then(|auth| crate::auth::verify_jwt(&auth.token))
+                        .filter(|claims| claims.exp > Utc::now().timestamp() as usize);
+                    let Some(claims) = claims else {
+                        self.reject(ctx);
+                        return;
+                    };
+                    self.login = claims.sub;
+                    self.authenticated = true;
+                    self.addr.do_send(ChatCommand::Connect {
+                        login: self.login.clone(),
+                        addr: ctx.address().recipient(),
+                    });
+                    ctx.text(
+                        serde_json::json!({"type": "authenticated", "login": self.login})
+                            .to_string(),
+                    );
+                    let remaining = claims.exp.saturating_sub(Utc::now().timestamp() as usize);
+                    ctx.run_later(
+                        std::time::Duration::from_secs(remaining as u64),
+                        |session, ctx| session.reject(ctx),
+                    );
+                    return;
+                }
+                if let Ok(parsed) = serde_json::from_str::<OutgoingMessage>(&text) {
                     self.addr.do_send(ChatCommand::SendMessage {
-                        sender: parsed.sender,
+                        sender: self.login.clone(),
                         recipient: parsed.recipient,
                         body: parsed.body,
                     });
@@ -246,14 +298,14 @@ impl Handler<ServerEvent> for ChatSession {
 pub async fn chat_ws(
     req: HttpRequest,
     stream: web::Payload,
-    login: web::Path<String>,
     srv: web::Data<Addr<ChatServer>>,
 ) -> Result<HttpResponse, Error> {
     let session = ChatSession {
-        login: login.into_inner(),
+        login: String::new(),
         addr: srv.get_ref().clone(),
         disconnected: Arc::new(AtomicBool::new(false)),
         heartbeat: std::time::Instant::now(),
+        authenticated: false,
     };
     ws::start(session, &req, stream)
 }

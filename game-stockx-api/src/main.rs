@@ -132,6 +132,7 @@ async fn main() -> io::Result<()> {
                     .service(chat::get_my_dialogs),
             )
             // Регистрация маршрута WebSocket для чата
+            .service(web::resource("/ws/").to(chat::chat_ws))
             .service(web::resource("/ws/{login}").to(chat::chat_ws))
     })
     .bind(&bind_address)?

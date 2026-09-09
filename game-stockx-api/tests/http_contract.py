@@ -154,6 +154,14 @@ def exercise(label, binary, pg, redis, W, franchises=False, companies=False):
         request('/api/remove_wish', {'release_id': 2})
         assert request('/api/remove_bid', {'release_id': 2})[2] == 404
         request('/api/collection-stats')
+        bob_ws_token = request('/api/login', {'user_login': 'bob', 'password': 'testpassword'}, False, record=False)[4]['token']
+        print(run(['node', str(ROOT / 'tests/ws_auth.mjs')], input=json.dumps({'base': f'ws://127.0.0.1:{http_port}', 'alice': token, 'bob': bob_ws_token})))
+        for _ in range(30):
+            persisted = sql("SELECT sender_login FROM messages WHERE body = 'token-bound sender';")
+            if 'alice' in persisted: break
+            time.sleep(0.1)
+        assert 'alice' in persisted and 'bob' not in persisted, persisted
+        assert '0' in sql("SELECT COUNT(*) FROM messages WHERE body = 'blocked';")
         # Profile endpoints: wrong password must not log out the current token.
         password_path = '/api/profile/password'
         change = {'old_password': 'testpassword', 'new_password': 'new-password-123', 'confirm_password': 'new-password-123'}
