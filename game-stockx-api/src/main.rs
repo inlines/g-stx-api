@@ -19,6 +19,7 @@ mod chat;
 mod collection;
 mod collectors;
 mod constants;
+mod franchises;
 mod metrics;
 mod metrics_middleware;
 mod pagination;
@@ -102,6 +103,7 @@ async fn main() -> io::Result<()> {
             .service(
                 web::scope("/api")
                     .service(product_list::list)
+                    .service(franchises::get_franchise)
                     .service(product_details::get)
                     .service(register::register)
                     .service(auth::login)

@@ -8,4 +8,5 @@ pub struct Pagination {
     pub ignore_digital: Option<bool>,
     pub sort: Option<String>,
     pub cat: i64,
+    pub franchise_id: Option<i32>,
 }

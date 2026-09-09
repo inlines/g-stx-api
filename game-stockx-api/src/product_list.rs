@@ -89,7 +89,10 @@ pub async fn list(
         };
     }
 
-    let cache_key = build_cache_key(cat, limit, offset, &text_query, ignore_digital, &sort);
+    let mut cache_key = build_cache_key(cat, limit, offset, &text_query, ignore_digital, &sort);
+    if let Some(id) = query.franchise_id {
+        cache_key.push_str(&format!(":franchise_{id}"));
+    }
 
     if let Ok(mut redis_conn) = redis_pool.get().await
         && let Ok(Some(cached)) = redis_conn.get_json::<ProductListResponse>(&cache_key).await
@@ -138,6 +141,10 @@ pub async fn list(
                 WHERE an.product_id = p.id AND an.name ILIKE $3
             )
         )
+        AND ($6::integer IS NULL OR EXISTS (
+            SELECT 1 FROM game_franschises gf
+            WHERE gf.product_id = p.id AND gf.franschise_id = $6
+        ))
         AND (p.game_type NOT IN (1, 2, 4, 13, 6, 5) OR p.game_type IS NULL)
         ORDER BY {} {} {}, p.id ASC
         LIMIT $1 OFFSET $2
@@ -151,6 +158,7 @@ pub async fn list(
         .bind::<diesel::sql_types::Text, _>(db_text_query.clone())
         .bind::<diesel::sql_types::BigInt, _>(cat)
         .bind::<diesel::sql_types::Bool, _>(ignore_digital)
+        .bind::<Nullable<Integer>, _>(query.franchise_id)
         .load::<ProductListItem>(conn);
 
     let count_sql = r#"
@@ -170,6 +178,10 @@ pub async fn list(
                 WHERE an.product_id = p.id AND an.name ILIKE $2
             )
         )
+        AND ($4::integer IS NULL OR EXISTS (
+            SELECT 1 FROM game_franschises gf
+            WHERE gf.product_id = p.id AND gf.franschise_id = $4
+        ))
         AND (p.game_type NOT IN (1, 2, 4, 13, 6, 5) OR p.game_type IS NULL)
     "#;
 
@@ -177,6 +189,7 @@ pub async fn list(
         .bind::<diesel::sql_types::BigInt, _>(cat)
         .bind::<diesel::sql_types::Text, _>(db_text_query)
         .bind::<diesel::sql_types::Bool, _>(ignore_digital)
+        .bind::<Nullable<Integer>, _>(query.franchise_id)
         .load::<CountResult>(conn);
 
     match (results, count_result) {

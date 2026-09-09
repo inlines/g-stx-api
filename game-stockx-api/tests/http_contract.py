@@ -14,7 +14,7 @@ def run(args, **kw):
 def port(container, number):
     return run(['docker', 'port', container, str(number)]).rsplit(':', 1)[1]
 
-def exercise(label, binary, pg, redis, W):
+def exercise(label, binary, pg, redis, W, franchises=False):
     dbport = port(pg, 5432)
     redisport = port(redis, 6379)
 
@@ -73,6 +73,22 @@ def exercise(label, binary, pg, redis, W):
         login = request('/api/login', {'user_login': 'alice', 'password': 'testpassword'}, False, record=False)
         assert login[2] == 200, login
         token = login[4]['token']
+        if franchises:
+            sql("INSERT INTO platforms(id,abbreviation,name,active,total_games) VALUES(167,'PS5','PlayStation 5',true,1); INSERT INTO product_platforms(product_id,platform_id) VALUES(1,167); INSERT INTO franschises VALUES(42,'Alpha series'),(43,'Shared series'),(44,'Empty series'); INSERT INTO game_franschises VALUES(42,1),(42,1),(43,1),(43,2);")
+            metadata = request('/api/franchises/42', auth=False)
+            assert metadata[2] == 200 and metadata[4] == {'id':42,'name':'Alpha series','platform_ids':[48,167]}, metadata
+            assert request('/api/franchises/999', auth=False)[2] == 404
+            assert request('/api/franchises/44', auth=False)[4]['platform_ids'] == []
+            base = '/api/products?cat=48&limit=15&sort=name&ignore_digital=false'
+            assert request(base)[4]['total_count'] == 2
+            filtered = request(base+'&franchise_id=42')
+            assert filtered[2] == 200 and filtered[4]['total_count'] == 1 and [x['id'] for x in filtered[4]['items']] == [1], filtered
+            assert request(base+'&franchise_id=43')[4]['total_count'] == 2
+            assert request(base+'&franchise_id=42')[4] == filtered[4]
+            assert request(base)[4]['total_count'] == 2
+            assert request(base+'&franchise_id=42&query=Beta')[4]['total_count'] == 0
+            assert request(base+'&franchise_id=42&offset=1')[4]['items'] == []
+            assert request('/api/products?cat=167&limit=15&franchise_id=42')[4]['total_count'] == 1
         request('/api/login', {'user_login': 'alice', 'password': 'wrong'}, False)
         reads = ['/api/collection-stats', '/api/collection?cat=48', '/api/wishlist?cat=48', '/api/wts?cat=48', '/api/collectors', '/api/collectors/alice/wts', '/api/products/1', '/api/products/999', '/api/products?cat=48&limit=21', '/api/messages?companion=bob', '/api/dialogs']
         for path in reads:
@@ -119,6 +135,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('before', type=Path)
     parser.add_argument('after', type=Path)
+    parser.add_argument('--franchises', action='store_true', help='Also verify franchise metadata, filters, pagination and cache isolation')
     args = parser.parse_args()
     suffix = uuid.uuid4().hex[:10]
     pg = 'gstx-contract-pg-' + suffix
@@ -136,8 +153,8 @@ if __name__ == '__main__':
         else:
             raise RuntimeError('Test PostgreSQL did not start')
         with tempfile.TemporaryDirectory(prefix='gstx-contract-') as tmp:
-            before = exercise('before', str(args.before.resolve()), pg, redis, Path(tmp))
-            after = exercise('after', str(args.after.resolve()), pg, redis, Path(tmp))
+            before = exercise('before', str(args.before.resolve()), pg, redis, Path(tmp), args.franchises)
+            after = exercise('after', str(args.after.resolve()), pg, redis, Path(tmp), args.franchises)
             differences = [(a, b) for a, b in zip(before, after) if a != b]
             if len(before) != len(after) or differences:
                 raise AssertionError(json.dumps(differences, ensure_ascii=False, indent=2))
