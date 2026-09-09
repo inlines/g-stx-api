@@ -1,22 +1,20 @@
+use crate::DBPool;
+use crate::constants::CONNECTION_POOL_ERROR;
+use crate::metrics::{CHAT_MESSAGES_SENT, WS_CONNECTIONS};
 use actix::prelude::*;
+use actix_rt::task::spawn_blocking;
 use actix_web::{Error, HttpRequest, HttpResponse, web};
 use actix_web_actors::ws;
-use diesel::prelude::*;
-use diesel::r2d2::{ConnectionManager};
+use actix_web_actors::ws::ProtocolError;
+use chrono::{DateTime, Utc};
 use diesel::PgConnection;
+use diesel::prelude::*;
+use diesel::r2d2::ConnectionManager;
+use diesel::sql_types::{Text, Timestamptz};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
-use actix_web_actors::ws::ProtocolError;
-use diesel::sql_types::{Text, Timestamptz};
-use crate::constants::{CONNECTION_POOL_ERROR};
-use crate::auth::{verify_jwt};
-use actix_web::http::header;
-use crate::{DBPool};
-use actix_rt::task::spawn_blocking;
-use chrono::{DateTime, Utc};
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use crate::metrics::{WS_CONNECTIONS, CHAT_MESSAGES_SENT};
+use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Message, Serialize, Deserialize, Debug, Clone)]
 #[rtype(result = "()")]
@@ -74,10 +72,7 @@ impl Handler<ChatCommand> for ChatServer {
 
                 let was_online = self.sessions.contains_key(&login);
 
-                self.sessions
-                    .entry(login)
-                    .or_insert_with(HashSet::new)
-                    .insert(addr);
+                self.sessions.entry(login).or_default().insert(addr);
 
                 if !was_online {
                     WS_CONNECTIONS.inc();
@@ -100,7 +95,7 @@ impl Handler<ChatCommand> for ChatServer {
             } => {
                 CHAT_MESSAGES_SENT.inc();
                 let pool = self.db_pool.clone();
-                
+
                 let message = ClientMessage {
                     sender: sender.clone(),
                     recipient: recipient.clone(),
@@ -112,7 +107,7 @@ impl Handler<ChatCommand> for ChatServer {
                 if let Some(sessions) = self.sessions.get(&recipient) {
                     // Отправляем каждому активному соединению
                     for addr in sessions {
-                        let _ = addr.do_send(message.clone());
+                        addr.do_send(message.clone());
                     }
                 }
 
@@ -126,9 +121,9 @@ impl Handler<ChatCommand> for ChatServer {
                     // Выполняем запрос с привязкой параметров
                     let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
                     diesel::sql_query(query)
-                        .bind::<diesel::sql_types::Text, _>(sender)  // Sender
-                        .bind::<diesel::sql_types::Text, _>(recipient)  // Recipient
-                        .bind::<diesel::sql_types::Text, _>(body)  // Body
+                        .bind::<diesel::sql_types::Text, _>(sender) // Sender
+                        .bind::<diesel::sql_types::Text, _>(recipient) // Recipient
+                        .bind::<diesel::sql_types::Text, _>(body) // Body
                         .execute(conn)
                         .expect("Error saving message to DB");
                 });
@@ -147,7 +142,6 @@ impl Actor for ChatSession {
     type Context = ws::WebsocketContext<Self>;
 
     fn started(&mut self, ctx: &mut Self::Context) {
-
         self.addr.do_send(ChatCommand::Connect {
             login: self.login.clone(),
             addr: ctx.address().recipient(),
@@ -157,7 +151,6 @@ impl Actor for ChatSession {
             ctx.ping(b"keep-alive");
         });
     }
-    
 
     fn stopped(&mut self, ctx: &mut Self::Context) {
         if !self.disconnected.swap(true, Ordering::SeqCst) {
@@ -208,7 +201,6 @@ impl StreamHandler<Result<ws::Message, ProtocolError>> for ChatSession {
     }
 }
 
-
 impl Handler<ClientMessage> for ChatSession {
     type Result = ();
 
@@ -236,13 +228,13 @@ pub async fn chat_ws(
 
 #[derive(Debug, Serialize, QueryableByName)]
 pub struct MessageDto {
-    #[sql_type = "Text"]
+    #[diesel(sql_type = Text)]
     pub sender: String,
-    #[sql_type = "Text"]
+    #[diesel(sql_type = Text)]
     pub recipient: String,
-    #[sql_type = "Text"]
+    #[diesel(sql_type = Text)]
     pub body: String,
-    #[sql_type = "Timestamptz"]
+    #[diesel(sql_type = Timestamptz)]
     pub created_at: chrono::NaiveDateTime,
 }
 
@@ -253,23 +245,11 @@ pub struct MessageQuery {
 
 #[get("/messages")]
 async fn get_my_messages(
-  pool: web::Data<DBPool>,
-  req: HttpRequest,
-  query: web::Query<MessageQuery>,
+    pool: web::Data<DBPool>,
+    req: HttpRequest,
+    query: web::Query<MessageQuery>,
 ) -> HttpResponse {
-  let token = match req.headers().get(header::AUTHORIZATION) {
-        Some(header_value) => {
-            let header_str = header_value.to_str().unwrap_or("");
-            if header_str.starts_with("Bearer ") {
-                Some(&header_str[7..])
-            } else {
-                None
-            }
-        }
-        None => None,
-    };
-
-    let claims = match token.and_then(|t| verify_jwt(t)) {
+    let claims = match crate::auth::authenticated_claims(&req) {
         Some(c) => c,
         None => return HttpResponse::Unauthorized().body("Invalid or missing token"),
     };
@@ -304,32 +284,17 @@ async fn get_my_messages(
 
 #[derive(Debug, Serialize, QueryableByName)]
 pub struct DialogDto {
-    #[sql_type = "Text"]
+    #[diesel(sql_type = Text)]
     pub companion: String,
-    #[sql_type = "Text"]
+    #[diesel(sql_type = Text)]
     pub last_message: String,
-    #[sql_type = "Timestamptz"]
+    #[diesel(sql_type = Timestamptz)]
     pub last_message_time: DateTime<Utc>,
 }
 
 #[get("/dialogs")]
-async fn get_my_dialogs(
-    pool: web::Data<DBPool>,
-    req: HttpRequest,
-) -> HttpResponse {
-    let token = match req.headers().get(header::AUTHORIZATION) {
-        Some(header_value) => {
-            let header_str = header_value.to_str().unwrap_or("");
-            if header_str.starts_with("Bearer ") {
-                Some(&header_str[7..])
-            } else {
-                None
-            }
-        }
-        None => None,
-    };
-
-    let claims = match token.and_then(|t| verify_jwt(t)) {
+async fn get_my_dialogs(pool: web::Data<DBPool>, req: HttpRequest) -> HttpResponse {
+    let claims = match crate::auth::authenticated_claims(&req) {
         Some(c) => c,
         None => return HttpResponse::Unauthorized().body("Invalid or missing token"),
     };

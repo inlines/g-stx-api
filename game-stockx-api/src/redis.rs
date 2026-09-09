@@ -1,9 +1,9 @@
+use async_trait::async_trait;
 use bb8::Pool;
 use bb8_redis::RedisConnectionManager;
 use bb8_redis::redis::{AsyncCommands, RedisError};
-use serde::{de::DeserializeOwned, Serialize};
+use serde::{Serialize, de::DeserializeOwned};
 use std::fmt;
-use async_trait::async_trait;
 
 #[derive(Debug)]
 pub enum CacheError {
@@ -55,7 +55,7 @@ pub trait RedisCacheExt {
     async fn get_json<T>(&mut self, key: &str) -> Result<Option<T>, CacheError>
     where
         T: DeserializeOwned + Send + 'static;
-    
+
     async fn set_json<T>(&mut self, key: &str, value: &T, ttl: usize) -> Result<(), CacheError>
     where
         T: Serialize + Send + Sync + 'static;

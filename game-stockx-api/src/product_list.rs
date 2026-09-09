@@ -1,13 +1,15 @@
-use actix_web::http::header;
-use diesel::prelude::*;
-use actix_web::web::{self, Data};
-use actix_web::{HttpResponse, HttpRequest};
-use diesel::sql_types::{BigInt, Double, Integer, Nullable, Text};
-use diesel::{RunQueryDsl};
-use serde::{Deserialize, Serialize};
+use crate::auth::verify_jwt;
 use crate::pagination::Pagination;
-use crate::{DBPool, redis::{RedisPool, RedisCacheExt}};
-use crate::auth::{verify_jwt};
+use crate::{
+    DBPool,
+    redis::{RedisCacheExt, RedisPool},
+};
+use actix_web::web::{self, Data};
+use actix_web::{HttpRequest, HttpResponse};
+use diesel::RunQueryDsl;
+use diesel::prelude::*;
+use diesel::sql_types::{BigInt, Double, Integer, Nullable, Text};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize, QueryableByName)]
 pub struct ProductListItem {
@@ -45,24 +47,18 @@ pub struct ProductListResponse {
     total_count: i64,
 }
 
-fn build_cache_key(cat: i64, limit: i64, offset: i64, query: &str, ignore_digital: bool, sort: &str) -> String {
+fn build_cache_key(
+    cat: i64,
+    limit: i64,
+    offset: i64,
+    query: &str,
+    ignore_digital: bool,
+    sort: &str,
+) -> String {
     format!(
         "products:cat_{}:limit_{}:offset_{}:q_{}:dig_{}:sort_{}",
         cat, limit, offset, query, ignore_digital, sort
     )
-}
-
-// Функция для извлечения токена из заголовков
-fn extract_token(req: &HttpRequest) -> Option<&str> {
-    req.headers().get(header::AUTHORIZATION)
-        .and_then(|header_value| header_value.to_str().ok())
-        .and_then(|header_str| {
-            if header_str.starts_with("Bearer ") {
-                Some(&header_str[7..])
-            } else {
-                None
-            }
-        })
 }
 
 #[get("/products")]
@@ -70,7 +66,7 @@ pub async fn list(
     pool: Data<DBPool>,
     redis_pool: Data<RedisPool>,
     query: web::Query<Pagination>,
-    req: HttpRequest
+    req: HttpRequest,
 ) -> HttpResponse {
     let limit = query.limit.unwrap_or(100);
     let offset = query.offset.unwrap_or(0);
@@ -79,29 +75,26 @@ pub async fn list(
     let ignore_digital = query.ignore_digital.unwrap_or(false);
     let sort = query.sort.clone().unwrap_or_default();
 
-
     if limit > 20 || offset > 20 {
         // Извлекаем токен из заголовка
-        let token = extract_token(&req);
-        
+        let token = crate::auth::bearer_token(&req);
+
         // Проверяем JWT токен
-        let claims = match token.and_then(|t| verify_jwt(t)) {
+        let _claims = match token.and_then(verify_jwt) {
             Some(c) => c,
-            None => return HttpResponse::Unauthorized().body("Invalid or missing token. Authorization required for large queries."),
+            None => {
+                return HttpResponse::Unauthorized()
+                    .body("Invalid or missing token. Authorization required for large queries.");
+            }
         };
-        
-        // Здесь можно добавить дополнительную проверку claims, если нужно
-        // Например, проверку роли пользователя, срока действия токена и т.д.
     }
-
-
 
     let cache_key = build_cache_key(cat, limit, offset, &text_query, ignore_digital, &sort);
 
-    if let Ok(mut redis_conn) = redis_pool.get().await {
-        if let Ok(Some(cached)) = redis_conn.get_json::<ProductListResponse>(&cache_key).await {
-            return HttpResponse::Ok().json(cached);
-        }
+    if let Ok(mut redis_conn) = redis_pool.get().await
+        && let Ok(Some(cached)) = redis_conn.get_json::<ProductListResponse>(&cache_key).await
+    {
+        return HttpResponse::Ok().json(cached);
     }
 
     let conn = &mut match pool.get() {
@@ -116,7 +109,7 @@ pub async fn list(
 
     let (order_column, order_direction, nulls_order) = match sort.as_str() {
         "date" => ("p.first_release_date", "ASC", "NULLS LAST"),
-        "name" | _ => ("p.name", "ASC", "NULLS LAST"),
+        _ => ("p.name", "ASC", "NULLS LAST"),
     };
 
     let sql = format!(
@@ -190,7 +183,7 @@ pub async fn list(
         (Ok(items), Ok(count)) => {
             let response = ProductListResponse {
                 items,
-                total_count: count.get(0).map(|c| c.total).unwrap_or(0),
+                total_count: count.first().map(|c| c.total).unwrap_or(0),
             };
 
             if let Ok(mut redis_conn) = redis_pool.get().await {

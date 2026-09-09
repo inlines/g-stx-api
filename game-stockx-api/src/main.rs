@@ -1,41 +1,38 @@
 #[macro_use]
 extern crate actix_web;
 #[macro_use]
-extern crate lazy_static;
-#[macro_use]
 extern crate prometheus;
 
-use std::{env, io, num::NonZeroU32};
 use dotenv::dotenv;
+use std::{env, io};
 
 use actix_cors::Cors;
-use actix_web::{middleware, App, HttpServer, web, http};
-use diesel::r2d2::ConnectionManager;
+use actix_web::{App, HttpServer, http, middleware, web};
 use diesel::PgConnection;
+use diesel::r2d2::ConnectionManager;
 use r2d2::{Pool, PooledConnection};
 
 use actix::prelude::*;
 
-mod constants;
-mod product_list;
-mod product_details;
-mod response;
-mod pagination;
-mod register;
 mod auth;
+mod chat;
 mod collection;
 mod collectors;
-mod platforms;
-mod chat;
-mod redis;
+mod constants;
 mod metrics;
 mod metrics_middleware;
+mod pagination;
+mod platforms;
+mod product_details;
+mod product_list;
+mod redis;
+mod register;
 mod simple_rate_limiter;
 
-use crate::simple_rate_limiter::GovernorRateLimiter;
 use crate::metrics::metrics_endpoint;
 use crate::metrics_middleware::MetricsMiddleware;
 use crate::redis::create_redis_pool;
+use crate::simple_rate_limiter::GovernorRateLimiter;
 
 pub type DBPool = Pool<ConnectionManager<PgConnection>>;
 pub type DBPooledConnection = PooledConnection<ConnectionManager<PgConnection>>;
@@ -43,7 +40,9 @@ pub type DBPooledConnection = PooledConnection<ConnectionManager<PgConnection>>;
 #[actix_web::main]
 async fn main() -> io::Result<()> {
     dotenv().ok();
-    env_logger::init_from_env(env_logger::Env::default().default_filter_or("actix_web=debug,actix_server=info"));
+    env_logger::init_from_env(
+        env_logger::Env::default().default_filter_or("actix_web=debug,actix_server=info"),
+    );
 
     // Загрузка данных для подключения к базе данных
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
@@ -53,9 +52,8 @@ async fn main() -> io::Result<()> {
         .expect("Failed to create pool");
 
     // Инициализация Redis
-    let redis_url = env::var("REDIS_URL")
-        .unwrap_or_else(|_| "redis://redis:6379".to_string());
-    
+    let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://redis:6379".to_string());
+
     let redis_pool = create_redis_pool(&redis_url)
         .await
         .expect("Failed to create Redis pool");
@@ -63,7 +61,7 @@ async fn main() -> io::Result<()> {
     // Создание серверного экземпляра ChatServer
     let chat_server = chat::ChatServer::new(pool.clone()).start();
     let chat_server_data = web::Data::new(chat_server);
-    
+
     // Настройка rate limiting - исправленные параметры
     let rate_limiter = GovernorRateLimiter::per_ip_with_whitelist(
         20, // 20 запросов в секунду
@@ -95,8 +93,11 @@ async fn main() -> io::Result<()> {
                 Cors::default()
                     .allow_any_origin()
                     .allowed_methods(vec!["GET", "POST", "OPTIONS"])
-                    .allowed_headers(vec![http::header::AUTHORIZATION, http::header::CONTENT_TYPE])
-                    .max_age(3600)
+                    .allowed_headers(vec![
+                        http::header::AUTHORIZATION,
+                        http::header::CONTENT_TYPE,
+                    ])
+                    .max_age(3600),
             )
             .service(
                 web::scope("/api")
@@ -122,7 +123,7 @@ async fn main() -> io::Result<()> {
                     .service(collectors::get_collector_wts)
                     .service(platforms::get_platforms)
                     .service(chat::get_my_messages)
-                    .service(chat::get_my_dialogs)
+                    .service(chat::get_my_dialogs),
             )
             // Регистрация маршрута WebSocket для чата
             .service(web::resource("/ws/{login}").to(chat::chat_ws))
@@ -143,10 +144,11 @@ mod health_tests {
 
     #[actix_web::test]
     async fn health_is_available_without_authentication() {
-        let app = actix_web::test::init_service(
-            App::new().route("/health", web::get().to(health)),
-        ).await;
-        let request = actix_web::test::TestRequest::get().uri("/health").to_request();
+        let app =
+            actix_web::test::init_service(App::new().route("/health", web::get().to(health))).await;
+        let request = actix_web::test::TestRequest::get()
+            .uri("/health")
+            .to_request();
         let response = actix_web::test::call_service(&app, request).await;
         assert_eq!(response.status(), http::StatusCode::OK);
         assert_eq!(actix_web::test::read_body(response).await, "ok");

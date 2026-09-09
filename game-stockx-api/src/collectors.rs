@@ -1,10 +1,8 @@
-use actix_web::{HttpRequest, HttpResponse, web, get};
-use crate::constants::CONNECTION_POOL_ERROR;
 use crate::DBPool;
-use crate::auth::verify_jwt;
-use actix_web::http::header;
+use crate::constants::CONNECTION_POOL_ERROR;
+use actix_web::{HttpRequest, HttpResponse, get, web};
 use diesel::prelude::*;
-use diesel::sql_types::{Text, BigInt};
+use diesel::sql_types::{BigInt, Text};
 use serde::Serialize;
 
 #[derive(QueryableByName, Serialize)]
@@ -18,19 +16,7 @@ struct Collector {
 
 #[get("/collectors")]
 async fn get_collectors(pool: web::Data<DBPool>, req: HttpRequest) -> HttpResponse {
-    let token = match req.headers().get(header::AUTHORIZATION) {
-        Some(header_value) => {
-            let header_str = header_value.to_str().unwrap_or("");
-            if header_str.starts_with("Bearer ") {
-                Some(&header_str[7..])
-            } else {
-                None
-            }
-        }
-        None => None,
-    };
-
-    let claims = match token.and_then(|t| verify_jwt(t)) {
+    let claims = match crate::auth::authenticated_claims(&req) {
         Some(c) => c,
         None => return HttpResponse::Unauthorized().body("Invalid or missing token"),
     };
@@ -84,10 +70,7 @@ async fn get_collector_wts(
     login: web::Path<String>,
     pagination: web::Query<CollectorWtsQuery>,
 ) -> HttpResponse {
-    let claims = req.headers().get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .and_then(|value| value.strip_prefix("Bearer "))
-        .and_then(verify_jwt);
+    let claims = crate::auth::authenticated_claims(&req);
     if claims.is_none() {
         return HttpResponse::Unauthorized().finish();
     }

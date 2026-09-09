@@ -1,12 +1,12 @@
-use actix_web::{post, web, HttpResponse};
-use serde::Deserialize;
-use crate::constants::{CONNECTION_POOL_ERROR};
 use crate::DBPool;
+use crate::constants::CONNECTION_POOL_ERROR;
+use actix_web::{HttpResponse, post, web};
 use diesel::prelude::*;
+use serde::Deserialize;
 
-use argon2::{Argon2, PasswordHasher};
+use crate::metrics::SUCCESSFUL_REGISTRATIONS;
 use argon2::password_hash::{SaltString, rand_core::OsRng};
-use crate::metrics::{SUCCESSFUL_REGISTRATIONS};
+use argon2::{Argon2, PasswordHasher};
 
 fn hash_password(password: &str) -> String {
     let salt = SaltString::generate(&mut OsRng);
@@ -17,7 +17,6 @@ fn hash_password(password: &str) -> String {
         .to_string()
 }
 
-
 #[derive(Deserialize)]
 pub struct RegisterRequest {
     user_login: String,
@@ -26,12 +25,10 @@ pub struct RegisterRequest {
 
 #[post("/register")]
 pub async fn register(pool: web::Data<DBPool>, data: web::Json<RegisterRequest>) -> HttpResponse {
-
     if !data.user_login.chars().all(|c| c.is_ascii_alphanumeric()) {
-        return HttpResponse::BadRequest()
-            .json(serde_json::json!({
-                "error": "Логин должен содержать только латинские буквы и цифры"
-            }));
+        return HttpResponse::BadRequest().json(serde_json::json!({
+            "error": "Логин должен содержать только латинские буквы и цифры"
+        }));
     }
 
     let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
@@ -47,10 +44,10 @@ pub async fn register(pool: web::Data<DBPool>, data: web::Json<RegisterRequest>)
         .execute(conn);
 
     match result {
-        Ok(_) =>{SUCCESSFUL_REGISTRATIONS.inc(); HttpResponse::Created()
-            .finish()},
-        Err(_) => HttpResponse::Conflict()
-            .body("User already exists"),
+        Ok(_) => {
+            SUCCESSFUL_REGISTRATIONS.inc();
+            HttpResponse::Created().finish()
+        }
+        Err(_) => HttpResponse::Conflict().body("User already exists"),
     }
 }
-

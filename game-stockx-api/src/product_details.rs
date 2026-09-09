@@ -1,12 +1,13 @@
-use diesel::prelude::*;
-use actix_web::web::{self, Data, Path};
-use actix_web::{HttpRequest, HttpResponse};
-use diesel::sql_types::{Integer, Text, Nullable, Bool, Array, BigInt};
-use serde::{Deserialize, Serialize};
-use crate::constants::CONNECTION_POOL_ERROR;
-use actix_web::http::header;
 use crate::auth::verify_jwt;
-use crate::{DBPool, redis::{RedisPool, RedisCacheExt}};
+use crate::{
+    DBPool,
+    redis::{RedisCacheExt, RedisPool},
+};
+use actix_web::web::{Data, Path};
+use actix_web::{HttpRequest, HttpResponse};
+use diesel::prelude::*;
+use diesel::sql_types::{Array, Bool, Integer, Nullable, Text};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Deserialize, Serialize, QueryableByName)]
 pub struct ProductProperties {
@@ -63,27 +64,27 @@ pub struct ProductReleaseInfo {
 pub struct Company {
     #[diesel(sql_type = Integer)]
     pub id: i32,
-    
+
     #[diesel(sql_type = Integer)]
-    pub company: i32,  // company_id
-    
+    pub company: i32, // company_id
+
     #[diesel(sql_type = Integer)]
     pub game: i32,
-    
+
     #[diesel(sql_type = Nullable<Bool>)]
     pub developer: Option<bool>,
-    
+
     #[diesel(sql_type = Nullable<Bool>)]
     pub porting: Option<bool>,
-    
+
     #[diesel(sql_type = Nullable<Bool>)]
     pub publisher: Option<bool>,
-    
+
     #[diesel(sql_type = Nullable<Bool>)]
     pub supporting: Option<bool>,
-    
+
     #[diesel(sql_type = Nullable<Text>)]
-    pub name: Option<String>, 
+    pub name: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, QueryableByName)]
@@ -94,7 +95,7 @@ pub struct Franschise {
     pub product_id: i32,
     #[diesel(sql_type = Text)]
     pub franschise_name: String,
-    #[sql_type = "diesel::sql_types::BigInt"]
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
     pub total_games_count: i64,
 }
 
@@ -131,29 +132,15 @@ fn build_product_franschises_cache_key(product_id: i32) -> String {
 
 // Функция для извлечения и проверки токена
 fn extract_and_verify_token(req: &HttpRequest) -> Result<String, HttpResponse> {
-    let token = req
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|h| h.to_str().ok())
-        .and_then(|token_str| {
-            if token_str.starts_with("Bearer ") {
-                Some(&token_str[7..])
-            } else {
-                None
-            }
-        });
+    let token = crate::auth::bearer_token(req);
 
     match token {
-        Some(t) => {
-            verify_jwt(t)
-                .map(|claims| claims.sub)
-                .ok_or_else(|| {
-                    HttpResponse::Unauthorized()
-                        .body("Invalid or expired token")
-                })
+        Some(t) => verify_jwt(t)
+            .map(|claims| claims.sub)
+            .ok_or_else(|| HttpResponse::Unauthorized().body("Invalid or expired token")),
+        None => {
+            Err(HttpResponse::Unauthorized().body("Authorization header is missing or malformed"))
         }
-        None => Err(HttpResponse::Unauthorized()
-            .body("Authorization header is missing or malformed"))
     }
 }
 
@@ -168,7 +155,7 @@ pub async fn get(
 
     // Пытаемся получить и верифицировать токен
     let user_login_result = extract_and_verify_token(&req);
-    
+
     let user_login_opt = match user_login_result {
         Ok(login) => Some(login),
         Err(resp) => {
@@ -186,13 +173,14 @@ pub async fn get(
         }
     };
 
-    let (mut releases, screenshots) = match get_product_releases(&pool, &redis_pool, product_id).await {
-        Ok(data) => data,
-        Err(e) => {
-            eprintln!("Error getting releases: {}", e);
-            return HttpResponse::InternalServerError().finish();
-        }
-    };
+    let (mut releases, screenshots) =
+        match get_product_releases(&pool, &redis_pool, product_id).await {
+            Ok(data) => data,
+            Err(e) => {
+                eprintln!("Error getting releases: {}", e);
+                return HttpResponse::InternalServerError().finish();
+            }
+        };
 
     let companies = match get_product_companies(&pool, &redis_pool, product_id).await {
         Ok(data) => data,
@@ -233,10 +221,10 @@ async fn get_product_basic_info(
 ) -> Result<Option<ProductProperties>, String> {
     let cache_key = build_product_cache_key(product_id);
 
-    if let Ok(mut redis_conn) = redis_pool.get().await {
-        if let Ok(Some(cached)) = redis_conn.get_json::<ProductProperties>(&cache_key).await {
-            return Ok(Some(cached));
-        }
+    if let Ok(mut redis_conn) = redis_pool.get().await
+        && let Ok(Some(cached)) = redis_conn.get_json::<ProductProperties>(&cache_key).await
+    {
+        return Ok(Some(cached));
     }
 
     let conn = &mut pool.get().map_err(|e| e.to_string())?;
@@ -266,11 +254,10 @@ async fn get_product_basic_info(
         .optional()
         .map_err(|e| e.to_string())?;
 
-    if let Some(ref product_info) = product_info {
-      if let Ok(mut redis_conn) = redis_pool.get().await {
+    if let Some(ref product_info) = product_info
+        && let Ok(mut redis_conn) = redis_pool.get().await
+    {
         let _ = redis_conn.set_json(&cache_key, product_info, 86400).await;
-    }
-
     }
     Ok(product_info)
 }
@@ -281,11 +268,13 @@ async fn get_product_releases(
     product_id: i32,
 ) -> Result<(Vec<ProductReleaseInfo>, Vec<String>), String> {
     let cache_key = build_bids_cache_key(product_id);
-    
-    if let Ok(mut redis_conn) = redis_pool.get().await {
-        if let Ok(Some(cached)) = redis_conn.get_json::<(Vec<ProductReleaseInfo>, Vec<String>)>(&cache_key).await {
-            return Ok(cached);
-        }
+
+    if let Ok(mut redis_conn) = redis_pool.get().await
+        && let Ok(Some(cached)) = redis_conn
+            .get_json::<(Vec<ProductReleaseInfo>, Vec<String>)>(&cache_key)
+            .await
+    {
+        return Ok(cached);
     }
 
     let conn = &mut pool.get().map_err(|e| e.to_string())?;
@@ -347,10 +336,10 @@ async fn get_product_companies(
 ) -> Result<Vec<Company>, String> {
     let cache_key = build_product_companies_cache_key(product_id);
 
-    if let Ok(mut redis_conn) = redis_pool.get().await {
-        if let Ok(Some(cached)) = redis_conn.get_json::<Vec<Company>>(&cache_key).await {
-            return Ok(cached);
-        }
+    if let Ok(mut redis_conn) = redis_pool.get().await
+        && let Ok(Some(cached)) = redis_conn.get_json::<Vec<Company>>(&cache_key).await
+    {
+        return Ok(cached);
     }
 
     let conn = &mut pool.get().map_err(|e| e.to_string())?;
@@ -376,7 +365,9 @@ async fn get_product_companies(
         .map_err(|e| e.to_string())?;
 
     if let Ok(mut redis_conn) = redis_pool.get().await {
-        let _ = redis_conn.set_json(&cache_key, &product_companies, 86400).await;
+        let _ = redis_conn
+            .set_json(&cache_key, &product_companies, 86400)
+            .await;
     }
     Ok(product_companies)
 }
@@ -388,10 +379,10 @@ async fn get_product_franschises(
 ) -> Result<Vec<Franschise>, String> {
     let cache_key = build_product_franschises_cache_key(product_id);
 
-    if let Ok(mut redis_conn) = redis_pool.get().await {
-        if let Ok(Some(cached)) = redis_conn.get_json::<Vec<Franschise>>(&cache_key).await {
-            return Ok(cached);
-        }
+    if let Ok(mut redis_conn) = redis_pool.get().await
+        && let Ok(Some(cached)) = redis_conn.get_json::<Vec<Franschise>>(&cache_key).await
+    {
+        return Ok(cached);
     }
 
     let conn = &mut pool.get().map_err(|e| e.to_string())?;
@@ -416,7 +407,9 @@ async fn get_product_franschises(
         .map_err(|e| e.to_string())?;
 
     if let Ok(mut redis_conn) = redis_pool.get().await {
-        let _ = redis_conn.set_json(&cache_key, &product_franschise, 86400).await;
+        let _ = redis_conn
+            .set_json(&cache_key, &product_franschise, 86400)
+            .await;
     }
     Ok(product_franschise)
 }

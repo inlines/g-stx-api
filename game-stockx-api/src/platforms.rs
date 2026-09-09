@@ -1,7 +1,13 @@
-use actix_web::{get, web::Data, HttpResponse};
-use diesel::{sql_types::{Integer, Text, Nullable}, QueryableByName, RunQueryDsl};
-use serde::{Serialize, Deserialize};
-use crate::{DBPool, redis::{RedisPool, RedisCacheExt}};
+use crate::{
+    DBPool,
+    redis::{RedisCacheExt, RedisPool},
+};
+use actix_web::{HttpResponse, get, web::Data};
+use diesel::{
+    QueryableByName, RunQueryDsl,
+    sql_types::{Integer, Nullable, Text},
+};
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, QueryableByName)]
 pub struct PlatformItem {
@@ -26,7 +32,7 @@ async fn load_from_db(pool: &Data<DBPool>) -> Result<Vec<PlatformItem>, HttpResp
         log::error!("Failed to get DB connection: {}", e);
         HttpResponse::InternalServerError().finish()
     })?;
-    
+
     let query = r#"
         SELECT id, abbreviation, name, generation, total_games
         FROM public.platforms 
@@ -43,18 +49,15 @@ async fn load_from_db(pool: &Data<DBPool>) -> Result<Vec<PlatformItem>, HttpResp
 }
 
 #[get("/platforms")]
-pub async fn get_platforms(
-    pool: Data<DBPool>,
-    redis_pool: Data<RedisPool>,
-) -> HttpResponse {
+pub async fn get_platforms(pool: Data<DBPool>, redis_pool: Data<RedisPool>) -> HttpResponse {
     const CACHE_KEY: &str = "platforms:active_list";
     const CACHE_TTL_SEC: usize = 86400;
 
     // 1. Try to get from cache
-    if let Ok(mut conn) = redis_pool.get().await {
-        if let Ok(Some(cached)) = conn.get_json::<Vec<PlatformItem>>(CACHE_KEY).await {
-            return HttpResponse::Ok().json(cached);
-        }
+    if let Ok(mut conn) = redis_pool.get().await
+        && let Ok(Some(cached)) = conn.get_json::<Vec<PlatformItem>>(CACHE_KEY).await
+    {
+        return HttpResponse::Ok().json(cached);
     }
 
     // 2. Load from DB
