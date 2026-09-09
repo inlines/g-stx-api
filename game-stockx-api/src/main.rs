@@ -27,6 +27,7 @@ mod pagination;
 mod platforms;
 mod product_details;
 mod product_list;
+mod profile;
 mod redis;
 mod register;
 mod simple_rate_limiter;
@@ -109,6 +110,9 @@ async fn main() -> io::Result<()> {
                     .service(product_details::get)
                     .service(register::register)
                     .service(auth::login)
+                    .service(profile::change_password)
+                    .service(profile::save_avatar)
+                    .service(profile::get_avatar)
                     .service(collection::add_release)
                     .service(collection::set_release_price)
                     .service(collection::remove_release)

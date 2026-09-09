@@ -154,6 +154,46 @@ def exercise(label, binary, pg, redis, W, franchises=False, companies=False):
         request('/api/remove_wish', {'release_id': 2})
         assert request('/api/remove_bid', {'release_id': 2})[2] == 404
         request('/api/collection-stats')
+        # Profile endpoints: wrong password must not log out the current token.
+        password_path = '/api/profile/password'
+        change = {'old_password': 'testpassword', 'new_password': 'new-password-123', 'confirm_password': 'new-password-123'}
+        assert request(password_path, change, auth=False)[2] == 401
+        assert request(password_path, {**change, 'confirm_password': 'different'})[2] == 400
+        assert request(password_path, {**change, 'old_password': 'wrong'})[2] == 400
+        assert request(password_path, change)[2] == 204
+        assert request('/api/login', {'user_login': 'alice', 'password': 'testpassword'}, False, record=False)[2] == 401
+        assert request('/api/login', {'user_login': 'alice', 'password': 'new-password-123'}, False, record=False)[2] == 200
+        assert request(password_path, {'old_password': 'new-password-123', 'new_password': 'testpassword', 'confirm_password': 'testpassword'})[2] == 204
+        import zlib, struct
+        def png_bytes(w, h, color):
+            def chunk(kind, data):
+                return struct.pack('!I', len(data)) + kind + data + struct.pack('!I', zlib.crc32(kind + data))
+            return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('!2I5B', w, h, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress((b'\0' + bytes(color) * w) * h)) + chunk(b'IEND', b'')
+        def avatar(path, data=None, auth=True):
+            headers = {'Content-Type': 'image/png'}
+            if auth: headers['Authorization'] = 'Bearer ' + token
+            req = urllib.request.Request(f'http://127.0.0.1:{http_port}' + path, data=data, headers=headers)
+            try: response = urllib.request.urlopen(req, timeout=15)
+            except urllib.error.HTTPError as e: response = e
+            return response.status, response.read(), response.headers
+        assert avatar('/api/avatars/alice', auth=False)[0] == 404
+        valid = png_bytes(64, 64, [10, 20, 30])
+        assert avatar('/api/profile/avatar', valid, auth=False)[0] == 401
+        assert avatar('/api/profile/avatar', b'invalid')[0] == 400
+        assert avatar('/api/profile/avatar', png_bytes(64, 32, [10,20,30]))[0] == 400
+        assert avatar('/api/profile/avatar', b'x' * 32769)[0] == 413
+        assert avatar('/api/profile/avatar', valid)[0] == 204
+        first = avatar('/api/avatars/alice', auth=False)
+        assert first[0] == 200 and first[2]['Content-Type'] == 'image/png' and len(first[1]) < 32768
+        assert struct.unpack('!II', first[1][16:24]) == (64, 64)
+        assert avatar('/api/profile/avatar', b'invalid')[0] == 400
+        assert avatar('/api/avatars/alice', auth=False)[1] == first[1]
+        sql((ROOT / 'migrations/2026-09-09-170000-0000_user_avatar/up.sql').read_text())
+        assert avatar('/api/avatars/alice', auth=False)[1] == first[1]
+        assert avatar('/api/profile/avatar', png_bytes(64,64,[200,0,0]))[0] == 204
+        assert avatar('/api/avatars/alice', auth=False)[1] != first[1]
+        assert avatar('/api/avatars/bob', auth=False)[0] == 404
+        print(label + ': profile password, avatar validation, replacement and migration checks passed')
         (W / (label + '-responses.json')).write_text(json.dumps(results, ensure_ascii=False, indent=2))
         print(label + ': ' + str(len(results)) + ' HTTP responses recorded')
     finally:

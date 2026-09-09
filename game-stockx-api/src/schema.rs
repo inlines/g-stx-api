@@ -89,6 +89,7 @@ diesel::table! {
         id -> Int4,
         user_login -> Text,
         password_hash -> Text,
+        avatar -> Nullable<Bytea>,
         created_at -> Nullable<Timestamp>,
     }
 }
