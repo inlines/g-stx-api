@@ -25,16 +25,27 @@ pub struct ClientMessage {
     pub created_at: String,
 }
 
+#[derive(Message, Serialize, Clone)]
+#[rtype(result = "()")]
+#[serde(untagged)]
+pub enum ServerEvent {
+    Message(ClientMessage),
+    Presence {
+        r#type: &'static str,
+        online: Vec<String>,
+    },
+}
+
 #[derive(Message)]
 #[rtype(result = "()")]
 pub enum ChatCommand {
     Connect {
         login: String,
-        addr: Recipient<ClientMessage>,
+        addr: Recipient<ServerEvent>,
     },
     Disconnect {
         login: String,
-        addr: Recipient<ClientMessage>,
+        addr: Recipient<ServerEvent>,
     },
     SendMessage {
         sender: String,
@@ -44,11 +55,23 @@ pub enum ChatCommand {
 }
 
 pub struct ChatServer {
-    sessions: HashMap<String, HashSet<Recipient<ClientMessage>>>,
+    sessions: HashMap<String, HashSet<Recipient<ServerEvent>>>,
     db_pool: r2d2::Pool<ConnectionManager<PgConnection>>,
 }
 
 impl ChatServer {
+    fn broadcast_presence(&self) {
+        let mut online: Vec<String> = self.sessions.keys().cloned().collect();
+        online.sort();
+        let event = ServerEvent::Presence {
+            r#type: "presence",
+            online,
+        };
+        for session in self.sessions.values().flatten() {
+            session.do_send(event.clone());
+        }
+    }
+
     pub fn new(db_pool: r2d2::Pool<ConnectionManager<PgConnection>>) -> ChatServer {
         WS_CONNECTIONS.set(0);
         ChatServer {
@@ -77,6 +100,7 @@ impl Handler<ChatCommand> for ChatServer {
                 if !was_online {
                     WS_CONNECTIONS.inc();
                 }
+                self.broadcast_presence();
             }
             ChatCommand::Disconnect { login, addr } => {
                 if let Some(sessions) = self.sessions.get_mut(&login) {
@@ -84,6 +108,7 @@ impl Handler<ChatCommand> for ChatServer {
                     if sessions.is_empty() {
                         self.sessions.remove(&login);
                         WS_CONNECTIONS.dec();
+                        self.broadcast_presence();
                     }
                 }
                 println!("DisconnectedWS: {}", login);
@@ -107,7 +132,7 @@ impl Handler<ChatCommand> for ChatServer {
                 if let Some(sessions) = self.sessions.get(&recipient) {
                     // Отправляем каждому активному соединению
                     for addr in sessions {
-                        addr.do_send(message.clone());
+                        addr.do_send(ServerEvent::Message(message.clone()));
                     }
                 }
 
@@ -136,6 +161,7 @@ pub struct ChatSession {
     pub login: String,
     pub addr: Addr<ChatServer>,
     disconnected: Arc<AtomicBool>,
+    heartbeat: std::time::Instant,
 }
 
 impl Actor for ChatSession {
@@ -147,7 +173,11 @@ impl Actor for ChatSession {
             addr: ctx.address().recipient(),
         });
 
-        ctx.run_interval(std::time::Duration::from_secs(30), |_, ctx| {
+        ctx.run_interval(std::time::Duration::from_secs(30), |session, ctx| {
+            if session.heartbeat.elapsed() > std::time::Duration::from_secs(90) {
+                ctx.stop();
+                return;
+            }
             ctx.ping(b"keep-alive");
         });
     }
@@ -175,10 +205,11 @@ impl StreamHandler<Result<ws::Message, ProtocolError>> for ChatSession {
                 }
             }
             Ok(ws::Message::Ping(msg)) => {
+                self.heartbeat = std::time::Instant::now();
                 ctx.pong(&msg);
             }
             Ok(ws::Message::Pong(_)) => {
-                // можно логировать
+                self.heartbeat = std::time::Instant::now();
             }
             Ok(ws::Message::Close(reason)) => {
                 println!("WebSocket closed: {:?}", reason);
@@ -201,10 +232,10 @@ impl StreamHandler<Result<ws::Message, ProtocolError>> for ChatSession {
     }
 }
 
-impl Handler<ClientMessage> for ChatSession {
+impl Handler<ServerEvent> for ChatSession {
     type Result = ();
 
-    fn handle(&mut self, msg: ClientMessage, ctx: &mut Self::Context) {
+    fn handle(&mut self, msg: ServerEvent, ctx: &mut Self::Context) {
         if let Ok(text) = serde_json::to_string(&msg) {
             ctx.text(text);
         }
@@ -222,6 +253,7 @@ pub async fn chat_ws(
         login: login.into_inner(),
         addr: srv.get_ref().clone(),
         disconnected: Arc::new(AtomicBool::new(false)),
+        heartbeat: std::time::Instant::now(),
     };
     ws::start(session, &req, stream)
 }
@@ -327,4 +359,90 @@ async fn get_my_dialogs(pool: web::Data<DBPool>, req: HttpRequest) -> HttpRespon
     };
 
     HttpResponse::Ok().json(dialogs)
+}
+
+#[cfg(test)]
+mod presence_tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    struct Observer(Arc<Mutex<Vec<serde_json::Value>>>);
+    impl Actor for Observer {
+        type Context = Context<Self>;
+    }
+    impl Handler<ServerEvent> for Observer {
+        type Result = ();
+        fn handle(&mut self, event: ServerEvent, _: &mut Context<Self>) {
+            self.0
+                .lock()
+                .unwrap()
+                .push(serde_json::to_value(event).unwrap());
+        }
+    }
+
+    #[actix_rt::test]
+    async fn presence_tracks_users_across_multiple_tabs() {
+        let pool = r2d2::Pool::builder()
+            .max_size(1)
+            .min_idle(Some(0))
+            .build_unchecked(ConnectionManager::<PgConnection>::new(
+                "postgres://localhost/unused",
+            ));
+        let server = ChatServer::new(pool).start();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let first = Observer(events.clone()).start().recipient();
+        let second = Observer(events.clone()).start().recipient();
+        let bob = Observer(events.clone()).start().recipient();
+        for (login, addr) in [
+            ("alice", first.clone()),
+            ("alice", second.clone()),
+            ("bob", bob),
+        ] {
+            server
+                .send(ChatCommand::Connect {
+                    login: login.into(),
+                    addr,
+                })
+                .await
+                .unwrap();
+        }
+        server
+            .send(ChatCommand::Disconnect {
+                login: "alice".into(),
+                addr: first,
+            })
+            .await
+            .unwrap();
+        actix_rt::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert_eq!(
+            events.lock().unwrap().last().unwrap()["online"],
+            serde_json::json!(["alice", "bob"])
+        );
+        server
+            .send(ChatCommand::Disconnect {
+                login: "alice".into(),
+                addr: second,
+            })
+            .await
+            .unwrap();
+        actix_rt::time::sleep(std::time::Duration::from_millis(20)).await;
+        assert_eq!(
+            events.lock().unwrap().last().unwrap(),
+            &serde_json::json!({"type": "presence", "online": ["bob"]})
+        );
+    }
+
+    #[actix_rt::test]
+    async fn messages_keep_the_existing_wire_format() {
+        let message = ClientMessage {
+            sender: "alice".into(),
+            recipient: "bob".into(),
+            body: "Hi".into(),
+            created_at: "now".into(),
+        };
+        assert_eq!(
+            serde_json::to_value(ServerEvent::Message(message.clone())).unwrap(),
+            serde_json::to_value(message).unwrap()
+        );
+    }
 }
