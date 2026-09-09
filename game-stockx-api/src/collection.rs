@@ -49,7 +49,7 @@ struct CollectionItem {
 }
 
 #[derive(Serialize, QueryableByName)]
-struct WtsItem {
+pub(crate) struct WtsItem {
     #[diesel(sql_type = Integer)]
     release_id: i32,
 

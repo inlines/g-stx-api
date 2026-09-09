@@ -119,6 +119,7 @@ async fn main() -> io::Result<()> {
                     .service(collection::add_bid)
                     .service(collection::remove_bid)
                     .service(collectors::get_collectors)
+                    .service(collectors::get_collector_wts)
                     .service(platforms::get_platforms)
                     .service(chat::get_my_messages)
                     .service(chat::get_my_dialogs)
