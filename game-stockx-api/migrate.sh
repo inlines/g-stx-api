@@ -11,7 +11,7 @@ done
 
 # Выполнение миграций
 echo "Running database migrations..."
-if ! diesel migration run --database-url "$DATABASE_URL"; then
+if ! diesel migration run; then
   echo "Database migrations failed; backend startup aborted." >&2
   exit 1
 fi
