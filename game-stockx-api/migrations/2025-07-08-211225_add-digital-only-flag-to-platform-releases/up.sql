@@ -1,3 +1,3 @@
-ALTER TABLE product_platforms ADD COLUMN digital_only BOOLEAN NOT NULL DEFAULT false;
+ALTER TABLE product_platforms ADD COLUMN IF NOT EXISTS digital_only BOOLEAN NOT NULL DEFAULT false;
 
-ALTER TABLE releases ADD COLUMN serial text[] DEFAULT NULL;
+ALTER TABLE releases ADD COLUMN IF NOT EXISTS serial text[] DEFAULT NULL;

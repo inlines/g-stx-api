@@ -1,1 +1,1 @@
-ALTER TABLE users_have_releases ADD COLUMN product_id INTEGER NULL DEFAULT NULL;
+ALTER TABLE users_have_releases ADD COLUMN IF NOT EXISTS product_id INTEGER NULL DEFAULT NULL;
