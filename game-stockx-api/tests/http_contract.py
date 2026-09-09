@@ -124,18 +124,35 @@ def exercise(label, binary, pg, redis, W, franchises=False, companies=False):
         request('/api/set_release_price', {'release_id': 1, 'price': 0})
         request('/api/add_wts', {'release_id': 1, 'price': -1})
         request('/api/add_wts', {'release_id': 1, 'price': 500, 'cib': True})
+        # The retired table can contain old flags on an upgraded database.
+        migration = ROOT / 'migrations/2026-09-09-160000-0000_remove_bids'
+        sql((migration / 'down.sql').read_text())
+        sql("INSERT INTO users_have_bids VALUES (2, 'alice');")
+        sql((migration / 'up.sql').read_text())
+        sql((migration / 'up.sql').read_text())
+        assert sql("SELECT to_regclass('users_have_bids') IS NULL;").splitlines()[2].strip() == 't'
+        sale = request('/api/wts?cat=48')[4]['items'][0]
+        assert sale['price'] == 500 and sale['cib'] is True, sale
+        bob_token = request('/api/login', {'user_login': 'bob', 'password': 'testpassword'}, False, record=False)[4]['token']
+        public = request('/api/products/1', header='Bearer ' + bob_token)
+        assert public[2] == 200 and public[4]['releases'][0]['seller_logins'] == ['alice'], public
+        own = request('/api/products/1')
+        assert own[4]['releases'][0]['seller_logins'] == [], own
+        stats = request('/api/collection-stats')
+        assert stats[2] == 200 and 'bid_ids' not in stats[4][0], stats
         request('/api/add_wish', {'release_id': 2})
-        request('/api/add_bid', {'release_id': 2})
+        assert request('/api/add_bid', {'release_id': 2})[2] == 404
         for path in reads:
             request(path)
         request('/api/collection-by-login/alice?cat=0&limit=1000&offset=0')
         request('/api/remove_wts', {'release_id': 1})
+        assert request('/api/products/1', header='Bearer ' + bob_token)[4]['releases'][0]['seller_logins'] == []
         request('/api/collection-stats')
         request('/api/add_wts', {'release_id': 1, 'price': None, 'cib': False})
         request('/api/remove_release', {'release_id': 1})
         request('/api/wts?cat=48')
         request('/api/remove_wish', {'release_id': 2})
-        request('/api/remove_bid', {'release_id': 2})
+        assert request('/api/remove_bid', {'release_id': 2})[2] == 404
         request('/api/collection-stats')
         (W / (label + '-responses.json')).write_text(json.dumps(results, ensure_ascii=False, indent=2))
         print(label + ': ' + str(len(results)) + ' HTTP responses recorded')

@@ -51,7 +51,7 @@ pub struct ProductReleaseInfo {
     pub release_status: Option<i32>,
 
     #[diesel(sql_type = Array<Text>)]
-    pub bid_user_logins: Vec<String>,
+    pub seller_logins: Vec<String>,
 
     #[diesel(sql_type = Bool)]
     pub digital_only: bool,
@@ -118,10 +118,6 @@ fn build_product_cache_key(product_id: i32) -> String {
     format!("product_details:basic:{}", product_id)
 }
 
-fn build_bids_cache_key(product_id: i32) -> String {
-    format!("product_details:bids:{}", product_id)
-}
-
 fn build_product_companies_cache_key(product_id: i32) -> String {
     format!("product_details:companies:{}", product_id)
 }
@@ -173,14 +169,13 @@ pub async fn get(
         }
     };
 
-    let (mut releases, screenshots) =
-        match get_product_releases(&pool, &redis_pool, product_id).await {
-            Ok(data) => data,
-            Err(e) => {
-                eprintln!("Error getting releases: {}", e);
-                return HttpResponse::InternalServerError().finish();
-            }
-        };
+    let (mut releases, screenshots) = match get_product_releases(&pool, product_id).await {
+        Ok(data) => data,
+        Err(e) => {
+            eprintln!("Error getting releases: {}", e);
+            return HttpResponse::InternalServerError().finish();
+        }
+    };
 
     let companies = match get_product_companies(&pool, &redis_pool, product_id).await {
         Ok(data) => data,
@@ -198,10 +193,10 @@ pub async fn get(
         }
     };
 
-    // Если пользователь авторизован, скрываем его логин из bid_user_logins
+    // Если пользователь авторизован, скрываем его логин из seller_logins
     if let Some(login) = user_login_opt {
         for release in &mut releases {
-            release.bid_user_logins.retain(|l| l != &login);
+            release.seller_logins.retain(|l| l != &login);
         }
     }
 
@@ -264,19 +259,8 @@ async fn get_product_basic_info(
 
 async fn get_product_releases(
     pool: &Data<DBPool>,
-    redis_pool: &Data<RedisPool>,
     product_id: i32,
 ) -> Result<(Vec<ProductReleaseInfo>, Vec<String>), String> {
-    let cache_key = build_bids_cache_key(product_id);
-
-    if let Ok(mut redis_conn) = redis_pool.get().await
-        && let Ok(Some(cached)) = redis_conn
-            .get_json::<(Vec<ProductReleaseInfo>, Vec<String>)>(&cache_key)
-            .await
-    {
-        return Ok(cached);
-    }
-
     let conn = &mut pool.get().map_err(|e| e.to_string())?;
 
     let releases_query = r#"
@@ -288,15 +272,19 @@ async fn get_product_releases(
             p.id AS platform_id,
             r.release_status AS release_status,
             COALESCE(
-                ARRAY_AGG(uhb.user_login) FILTER (WHERE uhb.user_login IS NOT NULL), 
+                ARRAY_AGG(sale.user_login ORDER BY sale.user_login) FILTER (WHERE sale.user_login IS NOT NULL),
                 ARRAY[]::text[]
-            ) AS bid_user_logins,
+            ) AS seller_logins,
             r.digital_only AS digital_only,
             r.serial AS serial
         FROM releases AS r
         LEFT JOIN platforms AS p ON r.platform = p.id
         INNER JOIN regions AS reg ON reg.id = r.release_region
-        LEFT JOIN users_have_bids AS uhb ON uhb.release_id = r.id
+        LEFT JOIN (
+            SELECT wts.release_id, wts.user_login FROM users_have_wts wts
+            JOIN users_have_releases owned ON owned.release_id = wts.release_id
+                AND owned.user_login = wts.user_login
+        ) sale ON sale.release_id = r.id
         WHERE r.product_id = $1
         GROUP BY r.id, reg.name, p.name, p.id
         ORDER BY p.name
@@ -320,11 +308,6 @@ async fn get_product_releases(
         .into_iter()
         .map(|s| s.image_url)
         .collect();
-
-    if let Ok(mut redis_conn) = redis_pool.get().await {
-        let cache_data = (releases.clone(), screenshots.clone());
-        let _ = redis_conn.set_json(&cache_key, &cache_data, 60).await;
-    }
 
     Ok((releases, screenshots))
 }

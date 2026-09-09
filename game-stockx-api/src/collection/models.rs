@@ -112,12 +112,6 @@ pub(crate) struct CollectionStats {
     pub(crate) wish_ids: Vec<i32>,
 
     #[diesel(sql_type = diesel::sql_types::BigInt)]
-    pub(crate) bid_count: i64,
-
-    #[diesel(sql_type = diesel::sql_types::Array<diesel::sql_types::Integer>)]
-    pub(crate) bid_ids: Vec<i32>,
-
-    #[diesel(sql_type = diesel::sql_types::BigInt)]
     pub(crate) wts_count: i64,
 
     #[diesel(sql_type = diesel::sql_types::Array<diesel::sql_types::Integer>)]

@@ -20,7 +20,7 @@ async fn get_collection_stats(pool: web::Data<DBPool>, req: HttpRequest) -> Http
 
     let query = r#"
         SELECT
-        COALESCE(h.platform, w.platform, b.platform, s.platform) AS platform,
+        COALESCE(h.platform, w.platform, s.platform) AS platform,
 
         COALESCE(h.release_count, 0) AS have_count,
         COALESCE(h.release_ids, ARRAY[]::int[]) AS have_ids,
@@ -30,8 +30,6 @@ async fn get_collection_stats(pool: web::Data<DBPool>, req: HttpRequest) -> Http
         COALESCE(w.release_count, 0) AS wish_count,
         COALESCE(w.release_ids, ARRAY[]::int[]) AS wish_ids,
 
-        COALESCE(b.release_count, 0) AS bid_count,
-        COALESCE(b.release_ids, ARRAY[]::int[]) AS bid_ids,
         COALESCE(s.release_count, 0) AS wts_count,
         COALESCE(s.release_ids, ARRAY[]::int[]) AS wts_ids,
         COALESCE((
@@ -67,17 +65,6 @@ async fn get_collection_stats(pool: web::Data<DBPool>, req: HttpRequest) -> Http
         ) w ON h.platform = w.platform
 
         FULL OUTER JOIN (
-            SELECT 
-            r.platform,
-            COUNT(uhb.release_id) AS release_count,
-            ARRAY_AGG(uhb.release_id) AS release_ids
-            FROM users_have_bids AS uhb
-            JOIN releases AS r ON uhb.release_id = r.id
-            WHERE uhb.user_login = $1
-            GROUP BY r.platform
-        ) b ON COALESCE(h.platform, w.platform) = b.platform
-
-        FULL OUTER JOIN (
             SELECT r.platform, COUNT(sale.release_id) AS release_count,
                    ARRAY_AGG(sale.release_id) AS release_ids
             FROM users_have_wts sale
@@ -85,7 +72,7 @@ async fn get_collection_stats(pool: web::Data<DBPool>, req: HttpRequest) -> Http
             JOIN releases r ON r.id = sale.release_id
             WHERE sale.user_login = $1
             GROUP BY r.platform
-        ) s ON COALESCE(h.platform, w.platform, b.platform) = s.platform;
+        ) s ON COALESCE(h.platform, w.platform) = s.platform;
     "#;
 
     let result: Result<Vec<CollectionStats>, diesel::result::Error> = diesel::sql_query(query)
