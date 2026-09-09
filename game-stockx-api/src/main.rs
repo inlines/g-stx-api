@@ -109,6 +109,9 @@ async fn main() -> io::Result<()> {
                     .service(collection::get_collection)
                     .service(collection::get_collection_by_login)
                     .service(collection::get_wishlist)
+                    .service(collection::get_wts)
+                    .service(collection::add_wts)
+                    .service(collection::remove_wts)
                     .service(collection::get_collection_stats)
                     .service(collection::add_bid)
                     .service(collection::remove_bid)
@@ -120,7 +123,7 @@ async fn main() -> io::Result<()> {
             // Регистрация маршрута WebSocket для чата
             .service(web::resource("/ws/{login}").to(chat::chat_ws))
     })
-    .bind("0.0.0.0:9090")?
+    .bind("127.0.0.1:9090")?
     .workers(8)
     .run()
     .await
