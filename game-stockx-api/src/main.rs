@@ -77,6 +77,8 @@ async fn main() -> io::Result<()> {
         ],
     );
 
+    let bind_address = env::var("BIND_ADDRESS").unwrap_or_else(|_| "0.0.0.0:9090".to_string());
+
     // Запуск HTTP-сервера
     HttpServer::new(move || {
         App::new()
@@ -84,6 +86,7 @@ async fn main() -> io::Result<()> {
             .wrap(rate_limiter.clone())
             .wrap(MetricsMiddleware)
             .service(metrics_endpoint)
+            .route("/health", web::get().to(health))
             .app_data(web::Data::new(redis_pool.clone()))
             .app_data(web::Data::new(pool.clone()))
             .app_data(chat_server_data.clone())
@@ -123,8 +126,28 @@ async fn main() -> io::Result<()> {
             // Регистрация маршрута WebSocket для чата
             .service(web::resource("/ws/{login}").to(chat::chat_ws))
     })
-    .bind("127.0.0.1:9090")?
+    .bind(&bind_address)?
     .workers(8)
     .run()
     .await
+}
+// Liveness probe: confirms that the HTTP server is accepting requests.
+async fn health() -> actix_web::HttpResponse {
+    actix_web::HttpResponse::Ok().body("ok")
+}
+
+#[cfg(test)]
+mod health_tests {
+    use super::*;
+
+    #[actix_web::test]
+    async fn health_is_available_without_authentication() {
+        let app = actix_web::test::init_service(
+            App::new().route("/health", web::get().to(health)),
+        ).await;
+        let request = actix_web::test::TestRequest::get().uri("/health").to_request();
+        let response = actix_web::test::call_service(&app, request).await;
+        assert_eq!(response.status(), http::StatusCode::OK);
+        assert_eq!(actix_web::test::read_body(response).await, "ok");
+    }
 }
