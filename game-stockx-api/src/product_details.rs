@@ -178,7 +178,8 @@ pub async fn get(
     };
 
     let basic_info = match get_product_basic_info(&pool, &redis_pool, product_id).await {
-        Ok(info) => info,
+        Ok(Some(info)) => info,
+        Ok(None) => return HttpResponse::NotFound().body("Product not found"),
         Err(e) => {
             eprintln!("Error getting product info: {}", e);
             return HttpResponse::InternalServerError().finish();
@@ -229,12 +230,12 @@ async fn get_product_basic_info(
     pool: &Data<DBPool>,
     redis_pool: &Data<RedisPool>,
     product_id: i32,
-) -> Result<ProductProperties, String> {
+) -> Result<Option<ProductProperties>, String> {
     let cache_key = build_product_cache_key(product_id);
 
     if let Ok(mut redis_conn) = redis_pool.get().await {
         if let Ok(Some(cached)) = redis_conn.get_json::<ProductProperties>(&cache_key).await {
-            return Ok(cached);
+            return Ok(Some(cached));
         }
     }
 
@@ -262,12 +263,15 @@ async fn get_product_basic_info(
     let product_info = diesel::sql_query(query)
         .bind::<Integer, _>(product_id)
         .get_result::<ProductProperties>(conn)
+        .optional()
         .map_err(|e| e.to_string())?;
 
-    if let Ok(mut redis_conn) = redis_pool.get().await {
-        let _ = redis_conn.set_json(&cache_key, &product_info, 86400).await;
+    if let Some(ref product_info) = product_info {
+      if let Ok(mut redis_conn) = redis_pool.get().await {
+        let _ = redis_conn.set_json(&cache_key, product_info, 86400).await;
     }
 
+    }
     Ok(product_info)
 }
 
