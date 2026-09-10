@@ -54,17 +54,17 @@ where
             | "TRACE" => req.method().to_string(),
             _ => "OTHER".to_owned(),
         };
-        // Routing metadata is available after the inner service has run.
-        let request = req.request().clone();
+        // ResourceMap resolves templates without cloning the request: Actix routing
+        // needs exclusive access to it while capturing route parameters.
+        let endpoint = req
+            .match_pattern()
+            .unwrap_or_else(|| "unmatched".to_owned());
 
         let service = self.service.clone();
         Box::pin(async move {
             let res = service.call(req).await;
 
             let duration = start.elapsed().as_secs_f64();
-            let endpoint = request
-                .match_pattern()
-                .unwrap_or_else(|| "unmatched".to_owned());
             let status = match &res {
                 Ok(resp) => resp.response().status().as_u16().to_string(),
                 Err(error) => error.as_response_error().status_code().as_u16().to_string(),
