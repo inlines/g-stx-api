@@ -1,6 +1,6 @@
 use crate::DBPool;
 use crate::constants::CONNECTION_POOL_ERROR;
-use crate::metrics::{CHAT_MESSAGES_SENT, WS_CONNECTIONS};
+use crate::metrics::{CHAT_MESSAGES_SENT, CHAT_PERSISTENCE_ERRORS, WS_CONNECTIONS};
 use actix::prelude::*;
 use actix_rt::task::spawn_blocking;
 use actix_web::{Error, HttpRequest, HttpResponse, web};
@@ -185,7 +185,6 @@ impl Handler<ChatCommand> for ChatServer {
                 recipient,
                 body,
             } => {
-                CHAT_MESSAGES_SENT.inc();
                 let pool = self.db_pool.clone();
 
                 let message = ClientMessage {
@@ -211,16 +210,26 @@ impl Handler<ChatCommand> for ChatServer {
                     "#;
 
                     // Выполняем запрос с привязкой параметров
-                    let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
-                    diesel::sql_query(query)
+                    let mut conn = match pool.get() {
+                        Ok(conn) => conn,
+                        Err(error) => {
+                            CHAT_PERSISTENCE_ERRORS.inc();
+                            log::warn!("Could not acquire connection for chat message: {error}");
+                            return;
+                        }
+                    };
+                    match diesel::sql_query(query)
                         .bind::<diesel::sql_types::Text, _>(sender) // Sender
                         .bind::<diesel::sql_types::Text, _>(recipient) // Recipient
                         .bind::<diesel::sql_types::Text, _>(body) // Body
-                        .execute(conn)
-                        .unwrap_or_else(|error| {
+                        .execute(&mut conn)
+                    {
+                        Ok(inserted) => CHAT_MESSAGES_SENT.inc_by(inserted as f64),
+                        Err(error) => {
+                            CHAT_PERSISTENCE_ERRORS.inc();
                             log::warn!("Could not persist chat message: {error}");
-                            0
-                        });
+                        }
+                    }
                 });
             }
         }

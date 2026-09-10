@@ -1,6 +1,6 @@
 use crate::DBPool;
 use crate::constants::CONNECTION_POOL_ERROR;
-use crate::metrics::{FAILED_LOGIN_ATTEMPTS, LOGIN_ATTEMPTS, SUCCESSFUL_LOGINS};
+use crate::metrics::{FAILED_LOGIN_ATTEMPTS, SUCCESSFUL_LOGINS};
 use actix_web::{HttpRequest, HttpResponse, post, web};
 use argon2::password_hash::PasswordHash;
 use argon2::{Argon2, PasswordVerifier};
@@ -131,23 +131,8 @@ struct LoginRequest {
 }
 
 #[post("/login")]
-async fn login(
-    pool: web::Data<DBPool>,
-    credentials: web::Json<LoginRequest>,
-    req: HttpRequest,
-) -> HttpResponse {
+async fn login(pool: web::Data<DBPool>, credentials: web::Json<LoginRequest>) -> HttpResponse {
     let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
-
-    let client_ip = req
-        .connection_info()
-        .peer_addr()
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| "unknown".to_string());
-    let username = &credentials.user_login;
-
-    LOGIN_ATTEMPTS
-        .with_label_values(&["attempt", username, &client_ip])
-        .inc();
 
     let query = r#"
         SELECT id, user_login, password_hash
@@ -164,9 +149,6 @@ async fn login(
         Ok(user) => {
             if verify_password(&credentials.password, &user.password_hash) {
                 SUCCESSFUL_LOGINS.inc();
-                LOGIN_ATTEMPTS
-                    .with_label_values(&["success", username, &client_ip])
-                    .inc();
                 let token = create_jwt(
                     &user.user_login,
                     user.id,
@@ -176,22 +158,18 @@ async fn login(
             } else {
                 // НЕВЕРНЫЙ ПАРОЛЬ
                 FAILED_LOGIN_ATTEMPTS
-                    .with_label_values(&["invalid_password", username, &client_ip])
-                    .inc();
-
-                LOGIN_ATTEMPTS
-                    .with_label_values(&["failure", username, &client_ip])
+                    .with_label_values(&["invalid_password"])
                     .inc();
                 HttpResponse::Unauthorized().body("Invalid credentials")
             }
         }
-        Err(_) => {
-            FAILED_LOGIN_ATTEMPTS
-                .with_label_values(&["user_not_found", username, &client_ip])
-                .inc();
-            LOGIN_ATTEMPTS
-                .with_label_values(&["failure", username, &client_ip])
-                .inc();
+        Err(error) => {
+            let reason = if matches!(error, diesel::result::Error::NotFound) {
+                "user_not_found"
+            } else {
+                "database_error"
+            };
+            FAILED_LOGIN_ATTEMPTS.with_label_values(&[reason]).inc();
             HttpResponse::Unauthorized().body("Invalid credentials")
         }
     }

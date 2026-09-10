@@ -19,34 +19,26 @@ lazy_static::lazy_static! {
 
     pub static ref WS_CONNECTIONS: IntGauge = register_int_gauge!(
         "ws_connections",
-        "Active WebSocket connections"
+        "Unique logins with active WebSocket sessions in this backend process"
     ).unwrap();
 
     pub static ref CHAT_MESSAGES_SENT: Counter = register_counter!(
         "chat_messages_sent_total",
-        "Total chat messages sent"
+        "Chat messages successfully persisted to the database"
     ).unwrap();
 
-    pub static ref DB_POOL_CONNECTIONS: IntGauge = register_int_gauge!(
-        "db_pool_connections",
-        "Active DB connections in pool"
-    ).unwrap();
-
-    // Счетчик неудачных попыток входа с IP и причиной
     pub static ref FAILED_LOGIN_ATTEMPTS: CounterVec = register_counter_vec!(
         "failed_login_attempts_total",
-        "Total failed login attempts",
-        &["reason", "username", "ip"]  // Добавляем ip
+        "Failed login requests by bounded reason",
+        &["reason"]
     ).unwrap();
 
-    // Счетчик всех попыток входа (успешных и неудачных)
-    pub static ref LOGIN_ATTEMPTS: CounterVec = register_counter_vec!(
-        "login_attempts_total",
-        "Total login attempts",
-        &["status", "username", "ip"]  // status: success, failure
+    pub static ref CHAT_PERSISTENCE_ERRORS: Counter = register_counter!(
+        "chat_message_persistence_errors_total",
+        "Chat messages that could not be saved"
     ).unwrap();
 
-    // Опционально: счетчик успешных входов
+    // Kept as a standalone counter for existing dashboards.
     pub static ref SUCCESSFUL_LOGINS: Counter = register_counter!(
         "successful_logins_total",
         "Total successful logins"
@@ -54,17 +46,17 @@ lazy_static::lazy_static! {
 
     pub static ref SUCCESSFUL_ADD_TO_COLLECTION: Counter = register_counter!(
         "successful_add_to_collection_total",
-        "Total successful add to collection"
+        "New collection rows inserted"
     ).unwrap();
 
-    pub static ref SUCCESSFUL_ADD_TO_WTS: Counter = register_counter!(
-        "successful_add_to_wts_total",
-        "Total successful add to wts"
+    pub static ref WTS_SAVES: Counter = register_counter!(
+        "wts_saves_total",
+        "Successful WTS saves, including edits"
     ).unwrap();
 
     pub static ref SUCCESSFUL_ADD_TO_WISHLIST: Counter = register_counter!(
         "successful_add_to_wishlist_total",
-        "Total successful add to wishlist"
+        "New wishlist rows inserted"
     ).unwrap();
 
     pub static ref SUCCESSFUL_REGISTRATIONS: Counter = register_counter!(
@@ -72,12 +64,26 @@ lazy_static::lazy_static! {
         "Total successful registrations"
     ).unwrap();
 
-    // Опционально: счетчик попыток входа по IP
-    pub static ref LOGIN_ATTEMPTS_BY_IP: CounterVec = register_counter_vec!(
-        "login_attempts_by_ip_total",
-        "Login attempts by IP address",
-        &["ip", "status"]  // status: success, failure
-    ).unwrap();
+
+}
+
+/// Register finite business series before the first event / scrape.
+pub fn initialize() {
+    for counter in [
+        &*CHAT_MESSAGES_SENT,
+        &*CHAT_PERSISTENCE_ERRORS,
+        &*SUCCESSFUL_LOGINS,
+        &*SUCCESSFUL_ADD_TO_COLLECTION,
+        &*WTS_SAVES,
+        &*SUCCESSFUL_ADD_TO_WISHLIST,
+        &*SUCCESSFUL_REGISTRATIONS,
+    ] {
+        let _ = counter.get();
+    }
+    let _ = WS_CONNECTIONS.get();
+    for reason in ["invalid_password", "user_not_found", "database_error"] {
+        let _ = FAILED_LOGIN_ATTEMPTS.with_label_values(&[reason]);
+    }
 }
 
 #[get("/metrics")]

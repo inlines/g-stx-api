@@ -1,5 +1,5 @@
 use super::models::*;
-use crate::metrics::{SUCCESSFUL_ADD_TO_WISHLIST, SUCCESSFUL_ADD_TO_WTS};
+use crate::metrics::{SUCCESSFUL_ADD_TO_COLLECTION, SUCCESSFUL_ADD_TO_WISHLIST, WTS_SAVES};
 use crate::{DBPool, constants::CONNECTION_POOL_ERROR};
 use actix_web::{HttpRequest, HttpResponse, web};
 use diesel::prelude::*;
@@ -49,7 +49,7 @@ async fn add_wts(
 
     match result {
         Ok(count) if count.total > 0 => {
-            SUCCESSFUL_ADD_TO_WTS.inc();
+            WTS_SAVES.inc();
             HttpResponse::Ok().finish()
         }
         Ok(_) => HttpResponse::Forbidden().body("Only owned releases can be offered for sale"),
@@ -125,8 +125,8 @@ async fn add_release(
         .execute(conn);
 
     match result {
-        Ok(_) => {
-            SUCCESSFUL_ADD_TO_WTS.inc();
+        Ok(inserted) => {
+            SUCCESSFUL_ADD_TO_COLLECTION.inc_by(inserted as f64);
             HttpResponse::Ok().body(())
         }
         Err(err) => {
@@ -241,8 +241,8 @@ async fn add_wish(
         .execute(conn);
 
     match result {
-        Ok(_) => {
-            SUCCESSFUL_ADD_TO_WISHLIST.inc();
+        Ok(inserted) => {
+            SUCCESSFUL_ADD_TO_WISHLIST.inc_by(inserted as f64);
             HttpResponse::Ok().body(())
         }
         Err(err) => {
