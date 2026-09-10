@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 
 const PHOTO_LIMIT: usize = 768 * 1024;
-const PLATFORMS: [i32; 5] = [7, 9, 48, 167, 38]; // PS2, PS3, PS4, PS5, PSP (IGDB).
+const PLATFORMS: [i32; 5] = [8, 9, 48, 167, 38]; // PS2, PS3, PS4, PS5, PSP (IGDB).
 
 fn normalize_serial(value: &str) -> Result<String, AdminError> {
     let value = value.trim().to_ascii_uppercase();
@@ -332,6 +332,12 @@ async fn delete_archived(
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[actix_web::test]
+    async fn supports_ps2_but_not_ps1() {
+        assert!(PLATFORMS.contains(&8));
+        assert!(!PLATFORMS.contains(&7));
+        assert_eq!(PLATFORMS, [8, 9, 48, 167, 38]);
+    }
     #[actix_web::test]
     async fn serial_normalization_preserves_separators() {
         assert_eq!(normalize_serial("  slus-12345  ").unwrap(), "SLUS-12345");

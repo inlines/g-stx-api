@@ -29,13 +29,14 @@ def exercise(base, admin, uploader, sql):
         return request(f'/api/releases/{release}/serial-requests?' + urllib.parse.urlencode({'serial': serial}), token, 'POST', image, status)
 
     sql("""UPDATE releases SET serial=ARRAY['OLD-123'] WHERE id=1;
-        INSERT INTO platforms(id,name,abbreviation) VALUES(7,'PS2','PS2'),(9,'PS3','PS3'),(38,'PSP','PSP'),(167,'PS5','PS5'),(6,'PC','PC');
+        INSERT INTO platforms(id,name,abbreviation) VALUES(8,'PS2','PS2'),(7,'PlayStation','PS1'),(9,'PS3','PS3'),(38,'PSP','PSP'),(167,'PS5','PS5'),(6,'PC','PC');
         INSERT INTO regions(id,name) VALUES(2,'Asia');
-        INSERT INTO releases(id,product_id,platform,release_region) VALUES(2,1,7,1),(3,1,9,1),(4,1,38,1),(5,1,167,1),(6,1,6,1),(7,1,48,2);
+        INSERT INTO releases(id,product_id,platform,release_region) VALUES(2,1,8,1),(3,1,9,1),(4,1,38,1),(5,1,167,1),(6,1,6,1),(7,1,48,2),(8,1,7,1);
     """)
     submit(token=None, status=401)
     submit(token='bad', status=401)
     submit(release=6, status=400)
+    submit(release=8, status=400)  # PS1 must not accept serial requests.
     submit(release=999999, status=404)
     submit(serial='<script>', status=400)
     submit(serial='old-123', status=409)
