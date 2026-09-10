@@ -123,6 +123,7 @@ async fn main() -> io::Result<()> {
                     .service(serial_requests::photo)
                     .service(serial_requests::accept)
                     .service(serial_requests::reject)
+                    .service(serial_requests::delete_archived)
                     .service(profile::change_password)
                     .service(profile::save_avatar)
                     .service(profile::get_avatar)

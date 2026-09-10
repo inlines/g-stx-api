@@ -99,6 +99,26 @@ def exercise(base, admin, uploader, sql):
     request('/api/admin/serial-requests?status=garbage', status=400)
     archive = request('/api/admin/serial-requests?status=accepted&limit=1&offset=1')
     assert archive['total_count'] == 7 and len(archive['items']) == 1
+    edited_id = submit(serial='USER-TYPO')['id']
+    def accept_edit(serial, status=204, token=admin):
+        return request(f'/api/admin/serial-requests/{edited_id}/accept', token, 'POST', json.dumps({'serial': serial}).encode(), status)
+    accept_edit('', status=400)
+    accept_edit('CUSA-FIXED', status=403, token=uploader)
+    request(f'/api/admin/serial-requests/{edited_id}/archive', method='DELETE', status=409)
+    accept_edit('  cusa-fixed ')
+    assert 'USER-TYPO' not in sql('SELECT serial::text FROM releases WHERE id=1')
+    assert 'CUSA-FIXED' in sql('SELECT serial::text FROM releases WHERE id=1')
+    edited = next(row for row in request('/api/admin/serial-requests?status=accepted')['items'] if row['id'] == edited_id)
+    assert edited['serial'] == 'CUSA-FIXED' and edited['submitted_serial'] == 'USER-TYPO'
+    accept_edit('CUSA-FIXED')
+    accept_edit('CUSA-DIFFERENT', status=409)
+    assert 'CUSA-DIFFERENT' not in sql('SELECT serial::text FROM releases WHERE id=1')
+    request(f'/api/admin/serial-requests/{edited_id}/archive', uploader, 'DELETE', status=403)
+    request(f'/api/admin/serial-requests/{edited_id}/archive', method='DELETE', status=204)
+    request(f'/api/admin/serial-requests/{edited_id}/photo', status=404)
+    assert sql(f'SELECT count(*) FROM release_serial_requests WHERE id={edited_id}') == '0'
+    assert 'CUSA-FIXED' in sql('SELECT serial::text FROM releases WHERE id=1')
+    print('PASS: edited approval, original serial audit, conflicting retry, archive deletion/permissions and preserved catalogue serial')
     for number in range(20): submit(serial=f'LIMIT-{number}')
     submit(serial='LIMIT-21', status=409)
     assert request('/api/admin/serial-requests')['total_count'] == 20

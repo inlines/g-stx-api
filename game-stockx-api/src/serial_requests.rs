@@ -151,6 +151,8 @@ struct RequestInfo {
     #[diesel(sql_type = Text)]
     serial: String,
     #[diesel(sql_type = Text)]
+    submitted_serial: String,
+    #[diesel(sql_type = Text)]
     status: String,
     #[diesel(sql_type = Timestamptz)]
     created_at: chrono::DateTime<chrono::Utc>,
@@ -182,7 +184,7 @@ async fn list(
         require_admin(conn, &user)?;
         let total = diesel::sql_query("SELECT count(*) AS total FROM release_serial_requests WHERE status=$1")
             .bind::<Text,_>(&status).get_result::<Count>(conn)?.total;
-        let items = diesel::sql_query("SELECT q.id,q.release_id,r.product_id,p.name AS product_name,array_remove(COALESCE(r.serial,ARRAY[]::text[]),NULL) AS existing_serials,r.platform AS platform_id,pl.name AS platform_name,r.release_region AS region_id,reg.name AS region_name,r.release_date,r.digital_only,u.user_login AS submitter,q.serial,q.status,q.created_at,q.reviewed_at,reviewer.user_login AS reviewer FROM release_serial_requests q JOIN releases r ON r.id=q.release_id JOIN products p ON p.id=r.product_id JOIN platforms pl ON pl.id=r.platform JOIN regions reg ON reg.id=r.release_region JOIN users u ON u.id=q.submitter_id LEFT JOIN users reviewer ON reviewer.id=q.reviewed_by WHERE q.status=$1 ORDER BY COALESCE(q.reviewed_at,q.created_at) DESC,q.id DESC LIMIT $2 OFFSET $3")
+        let items = diesel::sql_query("SELECT q.id,q.release_id,r.product_id,p.name AS product_name,array_remove(COALESCE(r.serial,ARRAY[]::text[]),NULL) AS existing_serials,r.platform AS platform_id,pl.name AS platform_name,r.release_region AS region_id,reg.name AS region_name,r.release_date,r.digital_only,u.user_login AS submitter,COALESCE(q.accepted_serial,q.serial) AS serial,q.serial AS submitted_serial,q.status,q.created_at,q.reviewed_at,reviewer.user_login AS reviewer FROM release_serial_requests q JOIN releases r ON r.id=q.release_id JOIN products p ON p.id=r.product_id JOIN platforms pl ON pl.id=r.platform JOIN regions reg ON reg.id=r.release_region JOIN users u ON u.id=q.submitter_id LEFT JOIN users reviewer ON reviewer.id=q.reviewed_by WHERE q.status=$1 ORDER BY COALESCE(q.reviewed_at,q.created_at) DESC,q.id DESC LIMIT $2 OFFSET $3")
             .bind::<Text,_>(&status).bind::<BigInt,_>(limit).bind::<BigInt,_>(offset).load::<RequestInfo>(conn)?;
         Ok((items,total))
     })).await?;
@@ -223,38 +225,89 @@ struct Pending {
     release_id: i32,
     #[diesel(sql_type = Text)]
     serial: String,
+    #[diesel(sql_type = Nullable<Text>)]
+    accepted_serial: Option<String>,
     #[diesel(sql_type = Text)]
     status: String,
 }
 fn pending(conn: &mut PgConnection, id: i32) -> Result<Pending, AdminError> {
     diesel::sql_query(
-        "SELECT release_id, serial, status FROM release_serial_requests WHERE id=$1 FOR UPDATE",
+        "SELECT release_id, serial, accepted_serial, status FROM release_serial_requests WHERE id=$1 FOR UPDATE",
     )
     .bind::<Integer, _>(id)
     .get_result(conn)
     .optional()?
     .ok_or(AdminError::Missing("Заявка не найдена"))
 }
+#[derive(Deserialize)]
+struct Acceptance {
+    serial: Option<String>,
+}
+
 #[post("/admin/serial-requests/{id}/accept")]
 async fn accept(
     pool: web::Data<DBPool>,
     req: HttpRequest,
     id: web::Path<i32>,
+    body: web::Bytes,
 ) -> Result<HttpResponse, AdminError> {
     let user = claims(&req)?;
+    let requested = if body.is_empty() {
+        None
+    } else {
+        serde_json::from_slice::<Acceptance>(&body)
+            .map_err(|_| AdminError::Invalid("Некорректные данные серийника"))?
+            .serial
+    }
+    .map(|value| normalize_serial(&value))
+    .transpose()?;
     db(pool, move |conn| conn.transaction(|conn| {
         lock_admin_actions(conn)?;
         require_admin(conn, &user)?;
         let item = pending(conn, *id)?;
-        if item.status == "accepted" { return Ok(()); } // Safe retry after a lost response.
+        if item.status == "accepted" {
+            let accepted = item.accepted_serial.as_deref().unwrap_or(&item.serial);
+            if requested.as_deref().is_some_and(|value| value != accepted) {
+                return Err(AdminError::Conflict("Заявка уже принята с другим серийником. Обновите список"));
+            }
+            return Ok(());
+        }
+        let serial = match requested { Some(value) => value, None => normalize_serial(&item.serial)? };
         release(conn, item.release_id)?;
         diesel::sql_query("UPDATE releases SET serial = CASE WHEN EXISTS(SELECT 1 FROM unnest(serial) s WHERE upper(btrim(s))=$1) THEN serial ELSE array_append(COALESCE(serial,ARRAY[]::text[]),$1) END WHERE id=$2")
-            .bind::<Text,_>(&item.serial).bind::<Integer,_>(item.release_id).execute(conn)?;
-        diesel::sql_query("UPDATE release_serial_requests SET status='accepted',reviewed_at=now(),reviewed_by=$1 WHERE id=$2")
-            .bind::<Integer,_>(user.uid).bind::<Integer,_>(*id).execute(conn)?;
+            .bind::<Text,_>(&serial).bind::<Integer,_>(item.release_id).execute(conn)?;
+        diesel::sql_query("UPDATE release_serial_requests SET status='accepted',reviewed_at=now(),reviewed_by=$1,accepted_serial=$3 WHERE id=$2")
+            .bind::<Integer,_>(user.uid).bind::<Integer,_>(*id).bind::<Text,_>(&serial).execute(conn)?;
         Ok(())
     })).await?;
     // Releases are read directly from PostgreSQL, never from the product cache.
+    Ok(HttpResponse::NoContent().finish())
+}
+async fn delete_request(
+    pool: web::Data<DBPool>,
+    req: HttpRequest,
+    id: i32,
+    expected: &'static str,
+) -> Result<HttpResponse, AdminError> {
+    let user = claims(&req)?;
+    db(pool, move |conn| {
+        conn.transaction(|conn| {
+            lock_admin_actions(conn)?;
+            require_admin(conn, &user)?;
+            let item = pending(conn, id)?;
+            if item.status != expected {
+                return Err(AdminError::Conflict(
+                    "Статус заявки изменился. Обновите список",
+                ));
+            }
+            // Delete only the evidence record. Approved catalogue serials remain untouched.
+            diesel::sql_query("DELETE FROM release_serial_requests WHERE id=$1")
+                .bind::<Integer, _>(id)
+                .execute(conn)?;
+            Ok(())
+        })
+    })
+    .await?;
     Ok(HttpResponse::NoContent().finish())
 }
 #[delete("/admin/serial-requests/{id}")]
@@ -263,23 +316,15 @@ async fn reject(
     req: HttpRequest,
     id: web::Path<i32>,
 ) -> Result<HttpResponse, AdminError> {
-    let user = claims(&req)?;
-    db(pool, move |conn| {
-        conn.transaction(|conn| {
-            lock_admin_actions(conn)?;
-            require_admin(conn, &user)?;
-            let item = pending(conn, *id)?;
-            if item.status != "pending" {
-                return Err(AdminError::Conflict("Принятую заявку нельзя отклонить"));
-            }
-            diesel::sql_query("DELETE FROM release_serial_requests WHERE id=$1")
-                .bind::<Integer, _>(*id)
-                .execute(conn)?;
-            Ok(())
-        })
-    })
-    .await?;
-    Ok(HttpResponse::NoContent().finish())
+    delete_request(pool, req, *id, "pending").await
+}
+#[delete("/admin/serial-requests/{id}/archive")]
+async fn delete_archived(
+    pool: web::Data<DBPool>,
+    req: HttpRequest,
+    id: web::Path<i32>,
+) -> Result<HttpResponse, AdminError> {
+    delete_request(pool, req, *id, "accepted").await
 }
 
 #[cfg(test)]
