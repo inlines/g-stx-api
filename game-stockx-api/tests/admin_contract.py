@@ -147,6 +147,7 @@ try:
         assert sql("SELECT count(*) FROM messages") == '1'
         assert sql("SELECT count(*) FROM users_have_wts WHERE user_login='ordinary'") == '1'
         assert sql(f'SELECT count(*) FROM release_serial_requests WHERE submitter_id={victim_id}') == '0'
+        assert sql(f'SELECT count(*) FROM kudos_awards WHERE user_id={victim_id}') == '0'
         request('/api/profile/me', victim, status=401)
         request('/api/avatars/victim', status=404)
         register('victim')

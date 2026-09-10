@@ -22,6 +22,7 @@ mod collectors;
 mod companies;
 mod constants;
 mod franchises;
+mod kudos;
 mod metrics;
 mod metrics_middleware;
 mod pagination;
@@ -115,6 +116,8 @@ async fn main() -> io::Result<()> {
                     .service(register::register)
                     .service(auth::login)
                     .service(admin::me)
+                    .service(kudos::score)
+                    .service(kudos::challenge)
                     .service(admin::users)
                     .service(admin::promote)
                     .service(admin::delete_user)

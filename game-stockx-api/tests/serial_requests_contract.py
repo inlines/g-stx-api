@@ -41,6 +41,7 @@ def exercise(base, admin, uploader, sql):
     submit(serial='old-123', status=409)
     submit(image=b'not a jpeg', status=400)
     submit(image=b'0' * (768 * 1024 + 1), status=413)
+    assert request('/api/kudos?login=victim', token=None)['kudos'] == 0
     entry = submit(serial='  cusa-12345  ')
     entry_id = entry['id']
     assert entry['status'] == 'pending'
@@ -65,6 +66,7 @@ def exercise(base, admin, uploader, sql):
     request(f'/api/admin/serial-requests/{entry_id}/accept', method='POST', status=500)
     assert sql('SELECT serial::text FROM releases WHERE id=1') == '{OLD-123,EXTERNAL-456}'
     assert sql(f'SELECT status FROM release_serial_requests WHERE id={entry_id}') == 'pending'
+    assert request('/api/kudos?login=victim')['kudos'] == 0
     sql('DROP TRIGGER block_review ON release_serial_requests; DROP FUNCTION test_block_review();')
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
         first = executor.submit(request, f'/api/admin/serial-requests/{entry_id}/accept', admin, 'POST', None, 204)
@@ -72,6 +74,7 @@ def exercise(base, admin, uploader, sql):
         first.result(); second.result()
     assert sql('SELECT serial::text FROM releases WHERE id=1') == '{OLD-123,EXTERNAL-456,CUSA-12345}'
     assert request('/api/admin/serial-requests')['total_count'] == 0
+    assert request('/api/kudos?login=victim')['kudos'] == 10
     archive = request('/api/admin/serial-requests?status=accepted')['items'][0]
     assert archive['reviewed_at'] and archive['reviewer'] == 'segasanshiro'
     assert request(f'/api/admin/serial-requests/{entry_id}/photo') == jpeg
@@ -119,6 +122,23 @@ def exercise(base, admin, uploader, sql):
     assert sql(f'SELECT count(*) FROM release_serial_requests WHERE id={edited_id}') == '0'
     assert 'CUSA-FIXED' in sql('SELECT serial::text FROM releases WHERE id=1')
     print('PASS: edited approval, original serial audit, conflicting retry, archive deletion/permissions and preserved catalogue serial')
+    assert request('/api/kudos?login=victim', token=None)['kudos'] == 80
+    collectors = request('/api/collectors')
+    assert next(row for row in collectors if row['user_login'] == 'victim')['kudos'] == 80
+    # Simulate an archive predating Kudos and replay the migration twice.
+    sql(f'DELETE FROM kudos_awards WHERE request_id={entry_id}')
+    assert request('/api/kudos?login=victim')['kudos'] == 70
+    migration = Path(__file__).resolve().parents[1] / 'migrations/2026-09-10-160000-0000_kudos/up.sql'
+    sql(migration.read_text()); sql(migration.read_text())
+    assert request('/api/kudos?login=victim')['kudos'] == 80
+    assert request('/api/kudos/challenge', token=None) == [{'user_login': 'victim', 'kudos': 80}]
+    request('/api/kudos?login=missing', status=404)
+    sql("INSERT INTO users(user_login,password_hash) SELECT 'pgr'||lpad(i::text,3,'0'),'fixture' FROM generate_series(1,105) i;")
+    sql("INSERT INTO kudos_awards(request_id,user_id) SELECT -id,id FROM users WHERE user_login LIKE 'pgr%';")
+    leaders = request('/api/kudos/challenge', token=None)
+    assert len(leaders) == 100 and leaders[0]['user_login'] == 'victim'
+    assert [row['user_login'] for row in leaders[1:]] == [f'pgr{i:03}' for i in range(1,100)]
+    print('PASS: Kudos atomic/idempotent reward, archive deletion preservation, retroactive migration/replay, collectors and public top 100 tie ordering')
     for number in range(20): submit(serial=f'LIMIT-{number}')
     submit(serial='LIMIT-21', status=409)
     assert request('/api/admin/serial-requests')['total_count'] == 20

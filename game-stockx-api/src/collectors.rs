@@ -12,6 +12,8 @@ struct Collector {
 
     #[diesel(sql_type = BigInt)]
     release_count: i64,
+    #[diesel(sql_type = BigInt)]
+    kudos: i64,
 }
 
 #[get("/collectors")]
@@ -28,14 +30,15 @@ async fn get_collectors(pool: web::Data<DBPool>, req: HttpRequest) -> HttpRespon
     let query = r#"
         SELECT 
             u.user_login,
-            COUNT(uhr.release_id) AS release_count
+            COUNT(uhr.release_id) AS release_count,
+            COALESCE((SELECT SUM(points) FROM kudos_awards WHERE user_id=u.id),0)::bigint AS kudos
         FROM 
             users u
         INNER JOIN 
             users_have_releases uhr ON u.user_login = uhr.user_login
         WHERE u.user_login <> $1 
         GROUP BY 
-            u.user_login
+            u.id
         HAVING 
             COUNT(uhr.release_id) > 0
         ORDER BY 

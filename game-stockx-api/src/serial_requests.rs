@@ -278,6 +278,8 @@ async fn accept(
             .bind::<Text,_>(&serial).bind::<Integer,_>(item.release_id).execute(conn)?;
         diesel::sql_query("UPDATE release_serial_requests SET status='accepted',reviewed_at=now(),reviewed_by=$1,accepted_serial=$3 WHERE id=$2")
             .bind::<Integer,_>(user.uid).bind::<Integer,_>(*id).bind::<Text,_>(&serial).execute(conn)?;
+        diesel::sql_query("INSERT INTO kudos_awards(request_id,user_id) SELECT id,submitter_id FROM release_serial_requests WHERE id=$1 ON CONFLICT(request_id) DO NOTHING")
+            .bind::<Integer,_>(*id).execute(conn)?;
         Ok(())
     })).await?;
     // Releases are read directly from PostgreSQL, never from the product cache.
