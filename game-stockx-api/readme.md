@@ -261,3 +261,51 @@ PS2, PS3, PS4, PS5 или PSP (IGDB ID: 8, 9, 48, 167, 38). Модалка по�
 `tests/admin_contract.py` проверяет начисления, откат, конкурентное принятие,
 перенос старого архива и повтор миграции, сохранение награды после удаления
 архивной заявки, удаление аккаунта и ограничение рейтинга до 100 строк.
+
+
+## Заявки на альтернативные названия
+
+Миграция `2026-09-10-180000-0000_name_requests` расширяет общую очередь
+`release_serial_requests`: `kind=serial` связывается с `release_id`,
+`kind=alternative_name` — с `product_id`. Старые заявки и их IDs сохранены.
+Исторические поля `serial` и `accepted_serial` хранят исходное и принятое
+значение для обоих типов. Админские маршруты `/api/admin/serial-requests`
+сохранены и обслуживают общую очередь; в ответе появился `kind`, а `release_id`
+для названий равен `null`. Метаданные релиза у таких заявок не используются.
+
+`POST /api/products/{id}/name-requests?name=...` принимает JWT и подготовленный
+JPEG тем же способом, что заявка на серийник. Ограничения фото и лимит 20
+активных заявок общие для обоих типов. Название: 1–200 Unicode-символов,
+регистр сохраняется; лишние пробелы нормализуются. Основное название,
+существующий псевдоним или совпадающая активная заявка не принимаются повторно.
+
+При одобрении администратор может изменить значение (`{"serial":"Название"}`
+в сохранённом контракте). В одной транзакции добавляется `alternative_names`,
+принимается заявка, начисляется **5 Kudos** автору и повышается версия кэша.
+Если исправленное название уже есть у игры, сервер возвращает `409`:
+администратор может исправить или отклонить заявку. Повторное подтверждение
+принятой заявки не дублирует награду. Серийники по-прежнему дают **10 Kudos**.
+
+Локальные названия получают отрицательные IDs из отдельной последовательности,
+чтобы не пересекаться с положительными IDs IGDB. Генератор IGDB использует
+upsert по ID и сохраняет такие записи. Версия `catalog_name_revision` включена
+в ключи карточек и поисковых запросов: после принятия старые значения Redis
+не используются даже при параллельном заполнении кэша или временном сбое Redis.
+Обычный каталог без поисковой строки продолжает использовать прежний кэш.
+
+Удаление архивной заявки удаляет фото и запись, сохраняя имя в каталоге и Kudos.
+Удаление автора удаляет его заявки и награды, но принятые названия остаются.
+Обратная миграция отказывается удалять существующие новые заявки, локальные
+названия или награды по 5 очков. Рабочую БД тесты не изменяют: расширенный
+`tests/admin_contract.py` запускает `tests/name_requests_contract.py` в
+изолированных PostgreSQL/Redis и проверяет полный цикл, конкуренцию, откат,
+поиск после прогретого кэша, ограничения и повтор миграции.
+
+Newly saved serial/name requests emit a `new_request` WebSocket event with
+`request_id` and `kind`. Dispatch happens after the insertion transaction commits.
+The server queries current administrator roles for each notification and sends
+only to their authenticated, connected sessions (including multiple tabs).
+Failures to deliver do not undo a saved request. This is an online notification,
+not a persistent offline inbox; pending requests remain in the admin queue.
+`tests/request_notifications.mjs`, run by `admin_contract.py`, checks both types,
+multiple admin tabs, exclusion of non-admins, and failed duplicate submissions.

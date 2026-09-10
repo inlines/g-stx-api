@@ -144,3 +144,6 @@ def exercise(base, admin, uploader, sql):
     submit(serial='LIMIT-21', status=409)
     assert request('/api/admin/serial-requests')['total_count'] == 20
     print('PASS: serial requests: JPEG validation, console restrictions, existing serials/region, admin-only photos/review, transaction rollback, concurrent approval, archive, deletion and pending limit')
+
+    from name_requests_contract import exercise as exercise_names
+    exercise_names(request, sql, admin, uploader, jpeg)

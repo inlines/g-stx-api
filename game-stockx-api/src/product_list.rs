@@ -102,6 +102,14 @@ pub async fn list(
         cache_key.push_str(&format!(":company_{id}:role_{company_role}"));
     }
 
+    if !text_query.is_empty() {
+        let revision = match crate::redis::name_revision(pool.clone()).await {
+            Ok(value) => value,
+            Err(_) => return HttpResponse::InternalServerError().finish(),
+        };
+        cache_key.push_str(&format!(":names_v{revision}"));
+    }
+
     if let Ok(mut redis_conn) = redis_pool.get().await
         && let Ok(Some(cached)) = redis_conn.get_json::<ProductListResponse>(&cache_key).await
     {

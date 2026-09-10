@@ -135,6 +135,9 @@ try:
         """)
         from serial_requests_contract import exercise as exercise_serial_requests
         exercise_serial_requests(base, admin, victim, sql)
+        notification_test = subprocess.run(['node', str(ROOT / 'tests/request_notifications.mjs')], input=json.dumps({'base': base, 'admin': admin, 'ordinary': victim}), text=True, capture_output=True)
+        assert notification_test.returncode == 0, notification_test.stdout + notification_test.stderr
+        print(notification_test.stdout.strip())
         # An unexpected dependent relation must roll the entire deletion back.
         sql(f'CREATE TABLE deletion_blocker(user_id INTEGER REFERENCES users(id)); INSERT INTO deletion_blocker VALUES({victim_id});')
         request(f'/api/admin/users/{victim_id}', admin, method='DELETE', status=500)

@@ -214,7 +214,14 @@ async fn get_product_basic_info(
     redis_pool: &Data<RedisPool>,
     product_id: i32,
 ) -> Result<Option<ProductProperties>, String> {
-    let cache_key = build_product_cache_key(product_id);
+    let revision = crate::redis::name_revision(pool.clone())
+        .await
+        .map_err(|e| e.to_string())?;
+    let cache_key = format!(
+        "{}:names_v{}",
+        build_product_cache_key(product_id),
+        revision
+    );
 
     if let Ok(mut redis_conn) = redis_pool.get().await
         && let Ok(Some(cached)) = redis_conn.get_json::<ProductProperties>(&cache_key).await

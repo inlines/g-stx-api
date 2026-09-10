@@ -30,6 +30,11 @@ pub struct ClientMessage {
 #[serde(untagged)]
 pub enum ServerEvent {
     Message(ClientMessage),
+    NewRequest {
+        r#type: &'static str,
+        request_id: i32,
+        kind: String,
+    },
     SessionRevoked {
         r#type: &'static str,
     },
@@ -42,6 +47,10 @@ pub enum ServerEvent {
 #[derive(Message)]
 #[rtype(result = "()")]
 pub enum ChatCommand {
+    NotifyAdmins {
+        request_id: i32,
+        kind: String,
+    },
     RemoveUser {
         login: String,
     },
@@ -94,8 +103,49 @@ impl Actor for ChatServer {
 impl Handler<ChatCommand> for ChatServer {
     type Result = ();
 
-    fn handle(&mut self, msg: ChatCommand, _: &mut Context<Self>) -> Self::Result {
+    fn handle(&mut self, msg: ChatCommand, ctx: &mut Context<Self>) -> Self::Result {
         match msg {
+            ChatCommand::NotifyAdmins { request_id, kind } => {
+                let pool = self.db_pool.clone();
+                ctx.spawn(
+                    async move {
+                        spawn_blocking(move || {
+                            #[derive(QueryableByName)]
+                            struct AdminLogin {
+                                #[diesel(sql_type = Text)]
+                                user_login: String,
+                            }
+                            let mut conn = pool.get().map_err(|e| e.to_string())?;
+                            diesel::sql_query("SELECT user_login FROM users WHERE is_admin=true")
+                                .load::<AdminLogin>(&mut conn)
+                                .map(|rows| {
+                                    rows.into_iter().map(|r| r.user_login).collect::<Vec<_>>()
+                                })
+                                .map_err(|e| e.to_string())
+                        })
+                        .await
+                    }
+                    .into_actor(self)
+                    .map(move |result, server, _| match result {
+                        Ok(Ok(logins)) => {
+                            let event = ServerEvent::NewRequest {
+                                r#type: "new_request",
+                                request_id,
+                                kind,
+                            };
+                            for login in logins {
+                                if let Some(sessions) = server.sessions.get(&login) {
+                                    for session in sessions {
+                                        session.do_send(event.clone());
+                                    }
+                                }
+                            }
+                        }
+                        _ => log::warn!("Could not notify administrators of a new request"),
+                    }),
+                );
+            }
+
             ChatCommand::RemoveUser { login } => {
                 if let Some(sessions) = self.sessions.remove(&login) {
                     WS_CONNECTIONS.dec();

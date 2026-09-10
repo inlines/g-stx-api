@@ -81,3 +81,23 @@ impl RedisCacheExt for bb8_redis::redis::aio::Connection {
         Ok(())
     }
 }
+
+/// A DB-backed revision survives Redis downtime and changes atomically with accepted names.
+pub(crate) async fn name_revision(
+    pool: actix_web::web::Data<crate::DBPool>,
+) -> Result<i64, crate::admin::AdminError> {
+    use diesel::{QueryableByName, RunQueryDsl, sql_types::BigInt};
+    #[derive(QueryableByName)]
+    struct Revision {
+        #[diesel(sql_type = BigInt)]
+        revision: i64,
+    }
+    crate::admin::db(pool, |conn| {
+        Ok(
+            diesel::sql_query("SELECT revision FROM catalog_name_revision WHERE id=1")
+                .get_result::<Revision>(conn)?
+                .revision,
+        )
+    })
+    .await
+}
