@@ -133,6 +133,8 @@ try:
             UPDATE users SET avatar=decode('89504e47','hex') WHERE user_login='victim';
             INSERT INTO messages(sender_login,recipient_login,body) VALUES('victim','ordinary','out'),('ordinary','victim','in'),('ordinary','segasanshiro','keep');
         """)
+        from serial_requests_contract import exercise as exercise_serial_requests
+        exercise_serial_requests(base, admin, victim, sql)
         # An unexpected dependent relation must roll the entire deletion back.
         sql(f'CREATE TABLE deletion_blocker(user_id INTEGER REFERENCES users(id)); INSERT INTO deletion_blocker VALUES({victim_id});')
         request(f'/api/admin/users/{victim_id}', admin, method='DELETE', status=500)
@@ -144,6 +146,7 @@ try:
             assert sql(f"SELECT count(*) FROM {table} WHERE user_login='victim'") == '0'
         assert sql("SELECT count(*) FROM messages") == '1'
         assert sql("SELECT count(*) FROM users_have_wts WHERE user_login='ordinary'") == '1'
+        assert sql(f'SELECT count(*) FROM release_serial_requests WHERE submitter_id={victim_id}') == '0'
         request('/api/profile/me', victim, status=401)
         request('/api/avatars/victim', status=404)
         register('victim')

@@ -31,6 +31,7 @@ mod product_list;
 mod profile;
 mod redis;
 mod register;
+mod serial_requests;
 mod simple_rate_limiter;
 
 use crate::metrics::metrics_endpoint;
@@ -117,6 +118,11 @@ async fn main() -> io::Result<()> {
                     .service(admin::users)
                     .service(admin::promote)
                     .service(admin::delete_user)
+                    .service(serial_requests::submit)
+                    .service(serial_requests::list)
+                    .service(serial_requests::photo)
+                    .service(serial_requests::accept)
+                    .service(serial_requests::reject)
                     .service(profile::change_password)
                     .service(profile::save_avatar)
                     .service(profile::get_avatar)

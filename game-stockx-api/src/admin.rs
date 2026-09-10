@@ -14,7 +14,11 @@ use diesel::{
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug)]
-enum AdminError {
+pub(crate) enum AdminError {
+    Invalid(&'static str),
+    Conflict(&'static str),
+    TooLarge,
+    Missing(&'static str),
     Unauthorized,
     Forbidden,
     NotFound,
@@ -30,6 +34,8 @@ impl From<diesel::result::Error> for AdminError {
 impl std::fmt::Display for AdminError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(match self {
+            Self::Invalid(message) | Self::Conflict(message) | Self::Missing(message) => message,
+            Self::TooLarge => "Фото должно быть не больше 768 КБ",
             Self::Unauthorized => "Войдите в аккаунт заново",
             Self::Forbidden => "Доступ разрешён только администраторам",
             Self::NotFound => "Пользователь не найден",
@@ -43,9 +49,12 @@ impl std::fmt::Display for AdminError {
 impl ResponseError for AdminError {
     fn status_code(&self) -> StatusCode {
         match self {
+            Self::Invalid(_) => StatusCode::BAD_REQUEST,
+            Self::Conflict(_) => StatusCode::CONFLICT,
+            Self::TooLarge => StatusCode::PAYLOAD_TOO_LARGE,
             Self::Unauthorized => StatusCode::UNAUTHORIZED,
             Self::Forbidden => StatusCode::FORBIDDEN,
-            Self::NotFound => StatusCode::NOT_FOUND,
+            Self::NotFound | Self::Missing(_) => StatusCode::NOT_FOUND,
             Self::SelfDelete => StatusCode::CONFLICT,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -79,14 +88,14 @@ fn current(conn: &mut PgConnection, claims: &Claims) -> Result<UserInfo, AdminEr
     .optional()?
     .ok_or(AdminError::Unauthorized)
 }
-fn require_admin(conn: &mut PgConnection, claims: &Claims) -> Result<(), AdminError> {
+pub(crate) fn require_admin(conn: &mut PgConnection, claims: &Claims) -> Result<(), AdminError> {
     if current(conn, claims)?.is_admin {
         Ok(())
     } else {
         Err(AdminError::Forbidden)
     }
 }
-async fn db<T, F>(pool: web::Data<DBPool>, operation: F) -> Result<T, AdminError>
+pub(crate) async fn db<T, F>(pool: web::Data<DBPool>, operation: F) -> Result<T, AdminError>
 where
     T: Send + 'static,
     F: FnOnce(&mut PgConnection) -> Result<T, AdminError> + Send + 'static,
@@ -98,7 +107,7 @@ where
     .await
     .map_err(|_| AdminError::Internal)?
 }
-fn claims(req: &HttpRequest) -> Result<Claims, AdminError> {
+pub(crate) fn claims(req: &HttpRequest) -> Result<Claims, AdminError> {
     authenticated_claims(req).ok_or(AdminError::Unauthorized)
 }
 
@@ -143,7 +152,7 @@ async fn users(
     Ok(HttpResponse::Ok().json(serde_json::json!({"items":items,"total_count":total_count})))
 }
 
-fn lock_admin_actions(conn: &mut PgConnection) -> Result<(), AdminError> {
+pub(crate) fn lock_admin_actions(conn: &mut PgConnection) -> Result<(), AdminError> {
     // All promotions/deletions share this transaction lock. An administrator
     // being deleted cannot race a previously authorized mutation afterwards.
     diesel::sql_query("SELECT pg_advisory_xact_lock(724891003)").execute(conn)?;
