@@ -39,6 +39,14 @@ def exercise(request, sql, admin, uploader, jpeg):
     assert request('/api/products/1')['product']['alternative_names']==['レーシング — Новое имя']
     assert request(query)['total_count']==1
     assert int(sql("SELECT id FROM alternative_names WHERE product_id=1"))<0
+    # Personal/public collection DTOs include aliases without multiplying releases.
+    sql("INSERT INTO covers(id,image_url) VALUES(987654,'alias-fixture'); UPDATE products SET cover_id=987654 WHERE id=1;")
+    for path in ['/api/collection?cat=48', '/api/wishlist?cat=48', '/api/collection-by-login/victim?cat=0']:
+        response = request(path, uploader)
+        items = response['items'] if isinstance(response, dict) else response
+        assert len(items) == 1, (path, items)
+        assert items[0]['alternative_names'] == ['レーシング — Новое имя'], (path, items)
+
     archived=next(x for x in request('/api/admin/serial-requests?status=accepted&limit=50')['items'] if x['id']==first)
     assert archived['submitted_serial']=='Wrong title' and archived['serial']=='レーシング — Новое имя'
     accept(first,'Something different',status=409)

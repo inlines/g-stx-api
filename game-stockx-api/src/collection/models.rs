@@ -27,6 +27,9 @@ pub(crate) struct CollectionItem {
     #[diesel(sql_type = Text)]
     pub(crate) product_name: String,
 
+    #[diesel(sql_type = Array<Text>)]
+    pub(crate) alternative_names: Vec<String>,
+
     #[diesel(sql_type = Integer)]
     pub(crate) product_id: i32,
 
