@@ -162,6 +162,34 @@ pub async fn save_avatar(
     }
 }
 
+// Public display metadata only: no IDs, private account details or admin actions.
+#[get("/users/admin-badges")]
+pub async fn admin_badges(pool: web::Data<DBPool>) -> HttpResponse {
+    #[derive(QueryableByName)]
+    struct Badge {
+        #[diesel(sql_type = Text)]
+        user_login: String,
+    }
+    match web::block(move || {
+        let conn = &mut pool.get().map_err(|e| e.to_string())?;
+        diesel::sql_query("SELECT user_login FROM users WHERE is_admin = TRUE ORDER BY user_login")
+            .load::<Badge>(conn)
+            .map(|rows| {
+                rows.into_iter()
+                    .map(|row| row.user_login)
+                    .collect::<Vec<_>>()
+            })
+            .map_err(|e| e.to_string())
+    })
+    .await
+    {
+        Ok(Ok(logins)) => HttpResponse::Ok()
+            .insert_header(("Cache-Control", "no-store"))
+            .json(logins),
+        _ => HttpResponse::InternalServerError().finish(),
+    }
+}
+
 // Avatars are public profile images. No tokens in image URLs.
 #[get("/avatars/{login}")]
 pub async fn get_avatar(pool: web::Data<DBPool>, login: web::Path<String>) -> HttpResponse {

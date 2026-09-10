@@ -30,6 +30,9 @@ pub struct ClientMessage {
 #[serde(untagged)]
 pub enum ServerEvent {
     Message(ClientMessage),
+    SessionRevoked {
+        r#type: &'static str,
+    },
     Presence {
         r#type: &'static str,
         online: Vec<String>,
@@ -39,6 +42,9 @@ pub enum ServerEvent {
 #[derive(Message)]
 #[rtype(result = "()")]
 pub enum ChatCommand {
+    RemoveUser {
+        login: String,
+    },
     Connect {
         login: String,
         addr: Recipient<ServerEvent>,
@@ -90,6 +96,17 @@ impl Handler<ChatCommand> for ChatServer {
 
     fn handle(&mut self, msg: ChatCommand, _: &mut Context<Self>) -> Self::Result {
         match msg {
+            ChatCommand::RemoveUser { login } => {
+                if let Some(sessions) = self.sessions.remove(&login) {
+                    WS_CONNECTIONS.dec();
+                    for session in sessions {
+                        session.do_send(ServerEvent::SessionRevoked {
+                            r#type: "session_revoked",
+                        });
+                    }
+                    self.broadcast_presence();
+                }
+            }
             ChatCommand::Connect { login, addr } => {
                 println!("ConnectedWS: {}", login.clone());
 
@@ -150,7 +167,10 @@ impl Handler<ChatCommand> for ChatServer {
                         .bind::<diesel::sql_types::Text, _>(recipient) // Recipient
                         .bind::<diesel::sql_types::Text, _>(body) // Body
                         .execute(conn)
-                        .expect("Error saving message to DB");
+                        .unwrap_or_else(|error| {
+                            log::warn!("Could not persist chat message: {error}");
+                            0
+                        });
                 });
             }
         }
@@ -163,6 +183,7 @@ pub struct ChatSession {
     disconnected: Arc<AtomicBool>,
     heartbeat: std::time::Instant,
     authenticated: bool,
+    user_id: i32,
 }
 
 #[derive(Deserialize)]
@@ -203,6 +224,12 @@ impl Actor for ChatSession {
                 ctx.stop();
                 return;
             }
+            if session.authenticated
+                && !crate::auth::account_exists(session.user_id, &session.login)
+            {
+                session.reject(ctx);
+                return;
+            }
             ctx.ping(b"keep-alive");
         });
     }
@@ -231,6 +258,7 @@ impl StreamHandler<Result<ws::Message, ProtocolError>> for ChatSession {
                         self.reject(ctx);
                         return;
                     };
+                    self.user_id = claims.uid;
                     self.login = claims.sub;
                     self.authenticated = true;
                     self.addr.do_send(ChatCommand::Connect {
@@ -246,6 +274,10 @@ impl StreamHandler<Result<ws::Message, ProtocolError>> for ChatSession {
                         std::time::Duration::from_secs(remaining as u64),
                         |session, ctx| session.reject(ctx),
                     );
+                    return;
+                }
+                if !crate::auth::account_exists(self.user_id, &self.login) {
+                    self.reject(ctx);
                     return;
                 }
                 if let Ok(parsed) = serde_json::from_str::<OutgoingMessage>(&text) {
@@ -288,6 +320,10 @@ impl Handler<ServerEvent> for ChatSession {
     type Result = ();
 
     fn handle(&mut self, msg: ServerEvent, ctx: &mut Self::Context) {
+        if matches!(msg, ServerEvent::SessionRevoked { .. }) {
+            self.reject(ctx);
+            return;
+        }
         if let Ok(text) = serde_json::to_string(&msg) {
             ctx.text(text);
         }
@@ -306,6 +342,7 @@ pub async fn chat_ws(
         disconnected: Arc::new(AtomicBool::new(false)),
         heartbeat: std::time::Instant::now(),
         authenticated: false,
+        user_id: 0,
     };
     ws::start(session, &req, stream)
 }

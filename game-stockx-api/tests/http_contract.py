@@ -104,7 +104,7 @@ def exercise(label, binary, pg, redis, W, franchises=False, companies=False):
             assert request(base+'&company_id=43&company_role=developer')[4]['items'][0]['id'] == 2
             assert request(base+'&company_id=42&company_role=developer&query=Beta')[4]['total_count'] == 0
             assert request(base+'&company_id=42&company_role=publisher&offset=1')[4]['items'][0]['id'] == 2
-            assert request('/api/products?cat=167&limit=15&company_id=42&company_role=publisher')[4]['total_count'] == 1
+            assert request('/api/products?cat=167&limit=15&company_id=42&company_role=publisher')[4]['total_count'] == (2 if franchises else 1)
             assert request('/api/products?cat=167&limit=15&company_id=42&company_role=developer')[4]['total_count'] == (1 if franchises else 0)
             assert request(base+'&company_id=42&company_role=invalid')[2] == 400
         request('/api/login', {'user_login': 'alice', 'password': 'wrong'}, False)

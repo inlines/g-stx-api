@@ -14,6 +14,7 @@ use r2d2::{Pool, PooledConnection};
 
 use actix::prelude::*;
 
+mod admin;
 mod auth;
 mod chat;
 mod collection;
@@ -53,6 +54,8 @@ async fn main() -> io::Result<()> {
     let pool = Pool::builder()
         .build(manager)
         .expect("Failed to create pool");
+
+    auth::initialize(pool.clone()).map_err(|error| io::Error::other(error.to_string()))?;
 
     // Инициализация Redis
     let redis_url = env::var("REDIS_URL").unwrap_or_else(|_| "redis://redis:6379".to_string());
@@ -95,7 +98,7 @@ async fn main() -> io::Result<()> {
             .wrap(
                 Cors::default()
                     .allow_any_origin()
-                    .allowed_methods(vec!["GET", "POST", "OPTIONS"])
+                    .allowed_methods(vec!["GET", "POST", "DELETE", "OPTIONS"])
                     .allowed_headers(vec![
                         http::header::AUTHORIZATION,
                         http::header::CONTENT_TYPE,
@@ -110,9 +113,14 @@ async fn main() -> io::Result<()> {
                     .service(product_details::get)
                     .service(register::register)
                     .service(auth::login)
+                    .service(admin::me)
+                    .service(admin::users)
+                    .service(admin::promote)
+                    .service(admin::delete_user)
                     .service(profile::change_password)
                     .service(profile::save_avatar)
                     .service(profile::get_avatar)
+                    .service(profile::admin_badges)
                     .service(collection::add_release)
                     .service(collection::set_release_price)
                     .service(collection::remove_release)
