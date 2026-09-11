@@ -52,12 +52,21 @@ pub struct ProductListItem {
 pub struct CountResult {
     #[diesel(sql_type = BigInt)]
     pub total: i64,
+    #[diesel(sql_type = BigInt)]
+    pub europe: i64,
+    #[diesel(sql_type = BigInt)]
+    pub america: i64,
+    #[diesel(sql_type = BigInt)]
+    pub japan: i64,
+    #[diesel(sql_type = BigInt)]
+    pub other: i64,
 }
 
 #[derive(Serialize, Deserialize)]
 pub struct ProductListResponse {
     items: Vec<ProductListItem>,
     total_count: i64,
+    region_counts: Option<std::collections::BTreeMap<String, i64>>,
 }
 
 fn build_cache_key(
@@ -70,7 +79,7 @@ fn build_cache_key(
 ) -> String {
     // JSON encoding keeps delimiters in user-supplied search strings unambiguous.
     format!(
-        "cache:v6:catalog:regions:{}",
+        "cache:v7:catalog:regions:{}",
         serde_json::json!([cat, limit, offset, query, ignore_digital, sort])
     )
 }
@@ -91,7 +100,7 @@ fn build_region_filter(platform: &str, regions: &str) -> String {
     format!(" AND (cardinality({regions}::text[])=0 OR EXISTS (
         SELECT 1 FROM releases region_release
         WHERE region_release.product_id=p.id AND region_release.platform={platform}
-        AND (CASE region_release.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=ANY({regions})
+        AND (region_release.release_region=8 OR (CASE region_release.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=ANY({regions}))
     )) ")
 }
 
@@ -288,9 +297,19 @@ pub async fn list(
     } else {
         String::new()
     };
+    let regional_columns = ["europe", "america", "japan", "other"]
+        .map(|region| {
+            if unknown {
+                let predicate = build_region_filter("$1", &format!("ARRAY['{region}']::text[]"));
+                format!("COUNT(DISTINCT p.id) FILTER (WHERE true {predicate}) AS {region}")
+            } else {
+                format!("0::bigint AS {region}")
+            }
+        })
+        .join(", ");
     let count_sql = format!(
         r#"
-        SELECT COUNT(DISTINCT p.id) as total
+        SELECT COUNT(DISTINCT p.id) FILTER (WHERE true {region_filter}) as total, {regional_columns}
         FROM products p
         WHERE EXISTS (
             SELECT 1 
@@ -316,7 +335,6 @@ pub async fn list(
               AND (($6 = 'developer' AND ic.developer = true) OR ($6 = 'publisher' AND ic.publisher = true))
         ))
         {visibility}
-        {region_filter}
         {unknown_filter}
         {count_filter}
     "#
@@ -340,6 +358,21 @@ pub async fn list(
             let response = ProductListResponse {
                 items,
                 total_count: count.first().map(|c| c.total).unwrap_or(0),
+                region_counts: if unknown {
+                    count.first().map(|c| {
+                        [
+                            ("europe", c.europe),
+                            ("america", c.america),
+                            ("japan", c.japan),
+                            ("other", c.other),
+                        ]
+                        .into_iter()
+                        .map(|(k, v)| (k.to_owned(), v))
+                        .collect()
+                    })
+                } else {
+                    None
+                },
             };
 
             let ttl = if offset == 0 { 300 } else { 60 };

@@ -45,9 +45,9 @@ async fn load_from_db(pool: &Data<DBPool>) -> Result<Vec<PlatformItem>, HttpResp
         WITH counts AS (
             SELECT r.platform,
                 COUNT(DISTINCT r.product_id)::integer AS total_games,
-                COUNT(DISTINCT r.product_id) FILTER (WHERE r.release_region=1)::integer AS europe_games,
-                COUNT(DISTINCT r.product_id) FILTER (WHERE r.release_region=2)::integer AS america_games,
-                COUNT(DISTINCT r.product_id) FILTER (WHERE r.release_region=5)::integer AS japan_games,
+                COUNT(DISTINCT r.product_id) FILTER (WHERE r.release_region IN (1,8))::integer AS europe_games,
+                COUNT(DISTINCT r.product_id) FILTER (WHERE r.release_region IN (2,8))::integer AS america_games,
+                COUNT(DISTINCT r.product_id) FILTER (WHERE r.release_region IN (5,8))::integer AS japan_games,
                 COUNT(DISTINCT r.product_id) FILTER (WHERE r.release_region IS NULL OR r.release_region NOT IN (1,2,5))::integer AS other_games
             FROM releases r
             WHERE NOT r.digital_only AND NOT EXISTS (
@@ -81,7 +81,7 @@ pub async fn get_platforms(pool: Data<DBPool>, redis_pool: Data<RedisPool>) -> H
         Ok(value) => value,
         Err(_) => return HttpResponse::InternalServerError().finish(),
     };
-    let cache_key = format!("cache:v4:platforms:regions:catalog_v{}", versions.catalog);
+    let cache_key = format!("cache:v5:platforms:regions:catalog_v{}", versions.catalog);
     if let Some(cached) =
         redis::read::<Vec<PlatformItem>>(&redis_pool, Cache::Platforms, &cache_key).await
     {

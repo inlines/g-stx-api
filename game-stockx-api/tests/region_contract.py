@@ -14,13 +14,13 @@ def exercise(request, sql, admin_request, nonadmin_request):
       UPDATE catalog_cache_revision SET revision=revision+1 WHERE id=1;""")
     def catalog(regions):return request('/api/products?cat=48&limit=15&offset=0&ignore_digital=true&regions='+regions)
     def ids(regions):return {p['id'] for p in catalog(regions)['items'] if p['id']>=300}
-    assert ids('europe')=={300}, 'European PS5 release must not leak into PS4'
-    assert ids('america')=={300}, 'Brazil belongs to Other'
-    assert ids('japan')=={305}
-    assert ids('japan,america')=={300,305}
+    assert ids('europe')=={300,303}, 'European PS5 release must not leak into PS4'
+    assert ids('america') == {300,303}, 'Brazil belongs to Other'
+    assert ids('japan') == {303,305}
+    assert ids('japan,america') == {300,303,305}
     assert ids('other')=={301,302,303}, 'Unknown and worldwide included in Other'
-    assert ids('europe,america')=={300}
-    assert catalog('europe,america')['total_count']==2, 'Duplicate releases must not duplicate games'
+    assert ids('europe,america') == {300,303}
+    assert catalog('europe,america')['total_count']==3, 'Duplicate releases must not duplicate games'
     assert ids('')=={300,301,302,303,305}
     assert catalog('america,europe,europe')==catalog('europe,america')
     request('/api/products?cat=48&regions=invalid',status=400)
@@ -29,17 +29,21 @@ def exercise(request, sql, admin_request, nonadmin_request):
     unknown_url='/api/products?cat=48&limit=15&ignore_digital=true&unknown=true'
     sql("UPDATE releases SET serial=ARRAY['KNOWN'] WHERE id=300; UPDATE releases SET serial=ARRAY['PS5-ONLY'] WHERE id=308; UPDATE catalog_cache_revision SET revision=revision+1 WHERE id=1;")
     unknown=admin_request(unknown_url)
+    for region in ['europe','america','japan','other']:
+        assert unknown['region_counts'][region] == admin_request(unknown_url+'&regions='+region)['total_count']
+    searched=admin_request(unknown_url+'&query=Region%20game%20301')
+    assert searched['region_counts'] == {'europe':0,'america':0,'japan':0,'other':1}
     assert all(not p['has_serials'] for p in unknown['items'])
     assert {p['id'] for p in unknown['items'] if p['id']>=300}=={301,302,303,305}
     assert unknown['total_count']==len(unknown['items'])
-    assert [p['id'] for p in admin_request(unknown_url+'&regions=japan')['items']]==[305]
-    assert admin_request(unknown_url+'&regions=america')['total_count']==0
+    assert [p['id'] for p in admin_request(unknown_url+'&regions=japan')['items']]==[303,305]
+    assert admin_request(unknown_url+'&regions=america')['total_count']==1
     assert admin_request(unknown_url+'&query=Region%20game%20301')['total_count']==1
     # Authorization is also enforced on a warmed cache.
     nonadmin_request(unknown_url,status=403)
     assert 300 in ids(''), 'Unknown mode must not affect the ordinary catalogue'
     sql("UPDATE releases SET serial=ARRAY['IDENTIFIED'] WHERE id=307; UPDATE catalog_cache_revision SET revision=revision+1 WHERE id=1;")
-    assert admin_request(unknown_url+'&regions=japan')['total_count']==0
+    assert admin_request(unknown_url+'&regions=japan')['total_count']==1
     # Same endpoint works for owned releases without cover or region metadata.
     own=request('/api/collection?cat=48&limit=15&offset=0')
     by_id={p['release_id']:p for p in own['items']}
