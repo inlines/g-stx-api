@@ -16,14 +16,16 @@ def exercise(request, sql):
     def ids(regions):return {p['id'] for p in catalog(regions)['items'] if p['id']>=300}
     assert ids('europe')=={300}, 'European PS5 release must not leak into PS4'
     assert ids('america')=={300}, 'Brazil belongs to Other'
-    assert ids('other')=={301,302,303,305}, 'Unknown and worldwide included in Other'
+    assert ids('japan')=={305}
+    assert ids('japan,america')=={300,305}
+    assert ids('other')=={301,302,303}, 'Unknown and worldwide included in Other'
     assert ids('europe,america')=={300}
     assert catalog('europe,america')['total_count']==2, 'Duplicate releases must not duplicate games'
     assert ids('')=={300,301,302,303,305}
     assert catalog('america,europe,europe')==catalog('europe,america')
     request('/api/products?cat=48&regions=invalid',status=400)
     counts=next(p for p in request('/api/platforms') if p['id']==48)
-    assert (counts['total_games'],counts['europe_games'],counts['america_games'],counts['other_games'])==(5,2,1,3),counts
+    assert (counts['total_games'],counts['europe_games'],counts['america_games'],counts['japan_games'],counts['other_games'])==(5,2,1,1,2),counts
     # Same endpoint works for owned releases without cover or region metadata.
     own=request('/api/collection?cat=48&limit=15&offset=0')
     by_id={p['release_id']:p for p in own['items']}
@@ -35,6 +37,6 @@ def exercise(request, sql):
     assert public[304]['region_id'] is None and all(p['price'] is None for p in public.values())
     sql("UPDATE releases SET digital_only=true WHERE id=303; UPDATE catalog_cache_revision SET revision=revision+1 WHERE id=1;")
     counts=next(p for p in request('/api/platforms') if p['id']==48)
-    assert counts['other_games']==2 and counts['total_games']==4, 'Revision invalidates regional totals'
+    assert counts['other_games']==1 and counts['total_games']==4, 'Revision invalidates regional totals'
     sql("DELETE FROM products WHERE id BETWEEN 300 AND 305; DELETE FROM platforms WHERE id=167; DELETE FROM regions WHERE id IN (2,5,8,10); UPDATE platforms SET active=false WHERE id=48; UPDATE catalog_cache_revision SET revision=revision+1 WHERE id=1;")
     print('PASS: region union and platform isolation, Brazil/unknown mapping, unique digital-free totals, complete collection metadata and cache invalidation')

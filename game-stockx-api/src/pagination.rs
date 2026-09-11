@@ -30,7 +30,7 @@ impl Pagination {
             .collect();
         if groups
             .iter()
-            .any(|s| !matches!(s.as_str(), "europe" | "america" | "other"))
+            .any(|s| !matches!(s.as_str(), "europe" | "america" | "japan" | "other"))
         {
             return Err(());
         }

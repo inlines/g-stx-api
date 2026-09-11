@@ -70,7 +70,7 @@ fn build_cache_key(
 ) -> String {
     // JSON encoding keeps delimiters in user-supplied search strings unambiguous.
     format!(
-        "cache:v5:catalog:regions:{}",
+        "cache:v6:catalog:regions:{}",
         serde_json::json!([cat, limit, offset, query, ignore_digital, sort])
     )
 }
@@ -91,7 +91,7 @@ fn build_region_filter(platform: &str, regions: &str) -> String {
     format!(" AND (cardinality({regions}::text[])=0 OR EXISTS (
         SELECT 1 FROM releases region_release
         WHERE region_release.product_id=p.id AND region_release.platform={platform}
-        AND (CASE region_release.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' ELSE 'other' END)=ANY({regions})
+        AND (CASE region_release.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=ANY({regions})
     )) ")
 }
 

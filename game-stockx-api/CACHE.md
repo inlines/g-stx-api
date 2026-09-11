@@ -2,7 +2,7 @@
 
 Redis is a disposable cache, never a source of user-owned data. Reads distinguish hit, miss and error. Writes are best-effort. Each operation has a 250 ms deadline including checkout; a request can execute several operations. Multiplexed connections preserve protocol response ordering when a deadline cancels a future.
 
-Catalogue keys use cache:v5:catalog:regions; platform totals use cache:v3:platforms:regions; other keys use cache:v2, with a PostgreSQL catalog revision. Bulk IGDB imports increment catalog_cache_revision in the same transaction as changes. Name approvals increment catalog_name_revision (search) and products.cache_revision (that product) in their transaction. Read revisions before cache/DB data: in-flight requests using a previous revision cannot repopulate current keys. Serial approvals increment catalog_cache_revision too, refreshing the platform-specific has_serials catalogue flag. Old keys expire naturally.
+Catalogue keys use cache:v6:catalog:regions; platform totals use cache:v4:platforms:regions; other keys use cache:v2, with a PostgreSQL catalog revision. Bulk IGDB imports increment catalog_cache_revision in the same transaction as changes. Name approvals increment catalog_name_revision (search) and products.cache_revision (that product) in their transaction. Read revisions before cache/DB data: in-flight requests using a previous revision cannot repopulate current keys. Serial approvals increment catalog_cache_revision too, refreshing the platform-specific has_serials catalogue flag. Old keys expire naturally.
 
 TTLs: catalogue offset=0: 300s, other pages: 60s; basic game/company/franchise/platform data: 86400s. Releases/sellers/screenshots and personal/social data are not newly cached. Manual catalogue SQL must increment catalog_cache_revision in the same transaction. This policy requires the cache_revisions migration and matching IGDB export.cjs/cron.sh; do not deploy backend alone.
 
@@ -22,6 +22,6 @@ The catalogue namespace was advanced to v4 to avoid serving cached results of th
 
 ## Regional filters and totals
 
-Catalogue `regions` is a canonical comma-separated union of `europe`, `america`, `other`; empty means all. It participates in both result/count SQL and the cache key. Matching releases must belong to the selected platform. Europe is region 1, America is North America (2); Brazil, worldwide and unknown regions are Other.
+Catalogue `regions` is a canonical comma-separated union of `europe`, `america`, `japan`, `other`; empty means all. It participates in both result/count SQL and the cache key. Matching releases must belong to the selected platform. Europe is region 1, America is North America (2); Japan is region 5; Brazil, worldwide and unknown regions are Other.
 
 Platform totals count distinct products with releases, excluding digital releases and platform-level digital-only games. Each regional total is independent: a game can occur in several groups. These totals do not depend on catalogue search or date filters. Collection numerators follow the same regional and digital rules. Existing catalogue revision invalidation refreshes these totals; no new migration is required.

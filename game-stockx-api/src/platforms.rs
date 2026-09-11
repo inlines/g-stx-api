@@ -30,6 +30,8 @@ pub struct PlatformItem {
     #[diesel(sql_type = Integer)]
     pub america_games: i32,
     #[diesel(sql_type = Integer)]
+    pub japan_games: i32,
+    #[diesel(sql_type = Integer)]
     pub other_games: i32,
 }
 
@@ -45,7 +47,8 @@ async fn load_from_db(pool: &Data<DBPool>) -> Result<Vec<PlatformItem>, HttpResp
                 COUNT(DISTINCT r.product_id)::integer AS total_games,
                 COUNT(DISTINCT r.product_id) FILTER (WHERE r.release_region=1)::integer AS europe_games,
                 COUNT(DISTINCT r.product_id) FILTER (WHERE r.release_region=2)::integer AS america_games,
-                COUNT(DISTINCT r.product_id) FILTER (WHERE r.release_region IS NULL OR r.release_region NOT IN (1,2))::integer AS other_games
+                COUNT(DISTINCT r.product_id) FILTER (WHERE r.release_region=5)::integer AS japan_games,
+                COUNT(DISTINCT r.product_id) FILTER (WHERE r.release_region IS NULL OR r.release_region NOT IN (1,2,5))::integer AS other_games
             FROM releases r
             WHERE NOT r.digital_only AND NOT EXISTS (
                 SELECT 1 FROM product_platforms pp WHERE pp.product_id=r.product_id
@@ -57,6 +60,7 @@ async fn load_from_db(pool: &Data<DBPool>) -> Result<Vec<PlatformItem>, HttpResp
             COALESCE(c.total_games,0) AS total_games,
             COALESCE(c.europe_games,0) AS europe_games,
             COALESCE(c.america_games,0) AS america_games,
+            COALESCE(c.japan_games,0) AS japan_games,
             COALESCE(c.other_games,0) AS other_games
         FROM public.platforms p LEFT JOIN counts c ON c.platform=p.id
         WHERE p.active = true
@@ -77,7 +81,7 @@ pub async fn get_platforms(pool: Data<DBPool>, redis_pool: Data<RedisPool>) -> H
         Ok(value) => value,
         Err(_) => return HttpResponse::InternalServerError().finish(),
     };
-    let cache_key = format!("cache:v3:platforms:regions:catalog_v{}", versions.catalog);
+    let cache_key = format!("cache:v4:platforms:regions:catalog_v{}", versions.catalog);
     if let Some(cached) =
         redis::read::<Vec<PlatformItem>>(&redis_pool, Cache::Platforms, &cache_key).await
     {
