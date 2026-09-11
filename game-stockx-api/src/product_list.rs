@@ -19,6 +19,9 @@ pub struct ProductListItem {
     #[diesel(sql_type = Bool)]
     pub has_serials: bool,
 
+    #[diesel(sql_type = Bool)]
+    pub digital_only: bool,
+
     #[diesel(sql_type = Text)]
     pub name: String,
 
@@ -79,7 +82,7 @@ fn build_cache_key(
 ) -> String {
     // JSON encoding keeps delimiters in user-supplied search strings unambiguous.
     format!(
-        "cache:v7:catalog:regions:{}",
+        "cache:v8:catalog:regions:{}",
         serde_json::json!([cat, limit, offset, query, ignore_digital, sort])
     )
 }
@@ -142,7 +145,8 @@ pub async fn list(
     let offset = query.offset.unwrap_or(0);
     let cat = query.cat;
     let text_query = query.query.clone().unwrap_or_default();
-    let ignore_digital = query.ignore_digital.unwrap_or(false);
+    // Unknown always excludes digital-only games, regardless of the catalogue toggle.
+    let ignore_digital = unknown || query.ignore_digital.unwrap_or(false);
     let sort = query.sort.clone().unwrap_or_default();
     let include_unreleased = query.include_unreleased.unwrap_or(false);
 
@@ -226,6 +230,7 @@ pub async fn list(
             p.id AS id,
             p.name AS name,
             {serials} AS has_serials,
+            EXISTS(SELECT 1 FROM product_platforms pp WHERE pp.product_id=p.id AND pp.platform_id=$4 AND pp.digital_only) AS digital_only,
             p.first_release_date AS first_release_date,
             p.total_rating,
             p.total_rating_count,

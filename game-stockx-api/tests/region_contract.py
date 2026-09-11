@@ -29,6 +29,13 @@ def exercise(request, sql, admin_request, nonadmin_request):
     unknown_url='/api/products?cat=48&limit=15&ignore_digital=true&unknown=true'
     sql("UPDATE releases SET serial=ARRAY['KNOWN'] WHERE id=300; UPDATE releases SET serial=ARRAY['PS5-ONLY'] WHERE id=308; UPDATE catalog_cache_revision SET revision=revision+1 WHERE id=1;")
     unknown=admin_request(unknown_url)
+    assert admin_request(unknown_url.replace('ignore_digital=true', 'ignore_digital=false')) == unknown
+    assert admin_request(unknown_url.replace('&ignore_digital=true', '')) == unknown
+    assert admin_request(unknown_url+'&query=Region%20game%20304')['total_count']==0
+    regular=request('/api/products?cat=48&limit=15&ignore_digital=false&query=Region%20game%20304')
+    assert regular['items'][0]['digital_only'] is True
+    assert regular['items'][0]['has_serials'] is False
+    assert all(not p['digital_only'] for p in unknown['items'])
     for region in ['europe','america','japan','other']:
         assert unknown['region_counts'][region] == admin_request(unknown_url+'&regions='+region)['total_count']
     searched=admin_request(unknown_url+'&query=Region%20game%20301')
