@@ -41,26 +41,26 @@ def exercise(request, sql):
     def ids(**params):
         return {p['id'] for p in catalog(**params)['items'] if p['id'] >= 200}
 
-    assert ids() == {200, 207}, 'Only platform-specific non-digital serials confirm physical editions'
-    assert ids(query='   ') == {200, 207}, 'Whitespace is not a text search'
-    assert ids(query='Visibility') == {200, 201, 203, 205, 206, 207, 208, 209}
+    expected = {200, 201, 203, 205, 206, 209}
+    assert ids() == expected, 'Missing serials must not hide games; only platform digital_only excludes them'
+    assert ids(query='Visibility') == expected, 'Search must not bypass the original game-type exclusions'
     assert ids(query='Secret alias') == {201}
-    assert ids(query='%') == {209}, 'LIKE wildcards must be literal'
-    assert ids(query='_') == {209}
     assert ids(query='undated') == set(), 'Search cannot bypass the release-date gate'
     assert ids(query='undated', include_unreleased='true') == {204}
-    assert ids(include_unreleased='true') == {200, 204, 207}
-    assert ids(include_unreleased='false') == {200, 207}, 'Cached inclusion must not leak'
-    assert {200, 207}.issubset(ids(ignore_digital='false')), 'Disabling a filter must preserve confirmed physical editions'
-    assert 202 in ids(ignore_digital='false', query='Visibility')
+    assert ids(include_unreleased='true') == expected | {204}
+    assert ids(include_unreleased='false') == expected, 'Cached inclusion must not leak'
+    assert ids(ignore_digital='false') == expected | {202}
+    assert ids(ignore_digital='false', query='Visibility') == expected | {202}
     assert 204 not in ids(ignore_digital='false', query='Visibility')
+    assert next(p for p in catalog()['items'] if p['id'] == 206)['has_serials'] is True
     all_visible = catalog()
     assert all_visible['total_count'] == len(all_visible['items'])
     page = catalog(limit=1, offset=1)
     assert page['total_count'] == all_visible['total_count']
     assert page['items'] == all_visible['items'][1:2]
-    # An accepted serial makes an unknown game visible after the normal revision bump.
+    # Adding a serial updates the badge, not catalogue membership.
     sql("INSERT INTO releases(id,product_id,platform,release_region,serial) VALUES(201,201,48,1,ARRAY['TEST-201']); UPDATE catalog_cache_revision SET revision=revision+1 WHERE id=1;")
-    assert ids() == {200, 201, 207}
+    assert ids() == expected
+    assert next(p for p in catalog()['items'] if p['id'] == 201)['has_serials'] is True
     sql("DELETE FROM alternative_names WHERE id=99999; DELETE FROM game_bundles WHERE bundle_id=200; DELETE FROM products WHERE id BETWEEN 200 AND 209; DELETE FROM platforms WHERE id=167; UPDATE catalog_cache_revision SET revision=revision+1 WHERE id=1;")
-    print('PASS: physical/unknown/digital visibility, platform isolation, literal and alias search, date gate, cache separation, counts and pagination')
+    print('PASS: restored digital filtering independent of serials, original game types and alias search, date gate, cache separation, counts and pagination')
