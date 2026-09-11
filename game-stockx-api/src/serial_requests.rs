@@ -388,6 +388,61 @@ async fn accept(
     // Accepted names and serials invalidate their cached catalogue data atomically.
     Ok(HttpResponse::NoContent().finish())
 }
+async fn add_direct(
+    pool: web::Data<DBPool>,
+    req: HttpRequest,
+    id: i32,
+    value: String,
+    is_name: bool,
+) -> Result<HttpResponse, AdminError> {
+    let user = claims(&req)?;
+    let value = if is_name {
+        normalize_name(&value)?
+    } else {
+        normalize_serial(&value)?
+    };
+    db(pool, move |conn| conn.transaction(|conn| {
+        lock_admin_actions(conn)?;
+        require_admin(conn, &user)?;
+        if is_name {
+            lock_product(conn, id)?;
+            if name_exists(conn, id, &value)? { return Err(AdminError::Conflict("Это название уже указано у игры")); }
+            diesel::sql_query("INSERT INTO alternative_names(id,product_id,name,comment) VALUES(nextval('local_alternative_name_id'),$1,$2,'Administrator contribution')")
+                .bind::<Integer,_>(id).bind::<Text,_>(&value).execute(conn)?;
+            diesel::sql_query("UPDATE catalog_name_revision SET revision=revision+1 WHERE id=1").execute(conn)?;
+            diesel::sql_query("UPDATE products SET cache_revision=cache_revision+1 WHERE id=$1").bind::<Integer,_>(id).execute(conn)?;
+        } else {
+            let existing = release(conn, id)?;
+            if existing.serial.into_iter().flatten().flatten().any(|s| s.trim().eq_ignore_ascii_case(&value)) {
+                return Err(AdminError::Conflict("Этот серийник уже указан у релиза"));
+            }
+            diesel::sql_query("UPDATE releases SET serial=array_append(COALESCE(serial,ARRAY[]::text[]),$1) WHERE id=$2")
+                .bind::<Text,_>(&value).bind::<Integer,_>(id).execute(conn)?;
+            diesel::sql_query("UPDATE catalog_cache_revision SET revision=revision+1 WHERE id=1").execute(conn)?;
+        }
+        Ok(())
+    })).await?;
+    Ok(HttpResponse::NoContent().finish())
+}
+#[post("/admin/releases/{id}/serials")]
+async fn add_serial_direct(
+    pool: web::Data<DBPool>,
+    req: HttpRequest,
+    id: web::Path<i32>,
+    body: web::Json<Submission>,
+) -> Result<HttpResponse, AdminError> {
+    add_direct(pool, req, *id, body.into_inner().serial, false).await
+}
+#[post("/admin/products/{id}/alternative-names")]
+async fn add_name_direct(
+    pool: web::Data<DBPool>,
+    req: HttpRequest,
+    id: web::Path<i32>,
+    body: web::Json<NameSubmission>,
+) -> Result<HttpResponse, AdminError> {
+    add_direct(pool, req, *id, body.into_inner().name, true).await
+}
+
 async fn delete_request(
     pool: web::Data<DBPool>,
     req: HttpRequest,

@@ -126,6 +126,8 @@ async fn main() -> io::Result<()> {
                     .service(admin::delete_user)
                     .service(serial_requests::submit)
                     .service(serial_requests::submit_name)
+                    .service(serial_requests::add_serial_direct)
+                    .service(serial_requests::add_name_direct)
                     .service(serial_requests::list)
                     .service(serial_requests::photo)
                     .service(serial_requests::accept)
