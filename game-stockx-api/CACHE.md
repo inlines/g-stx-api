@@ -9,3 +9,5 @@ TTLs: catalogue offset=0: 300s, other pages: 60s; basic game/company/franchise/p
 Metrics: app_cache_reads_total{cache,result}, app_cache_writes_total{cache,result}, app_cache_errors_total{cache,operation,reason}, app_cache_operation_duration_seconds. Labels are bounded and contain no user IDs/search strings. Hit ratio = hit/(hit+miss); errors are a separate share of all reads. Zero traffic has no ratio. Backend restart resets these counters; use rate/increase.
 
 Run cargo test --locked and tests/admin_contract.py against the built executable for cache/administration regressions. That integration suite creates disposable PostgreSQL/Redis containers; it does not touch application data.
+
+Manual features/load.sh import updates ratings, related IDs and per-game/per-platform multiplayer modes, then advances catalog_cache_revision atomically. Catalogue keys include both multiplayer filters and use a features namespace; basic details use a features namespace to avoid decoding old DTOs. Multiplayer and similar-game sections on details are read from PostgreSQL. The scheduled IGDB cron is unchanged.

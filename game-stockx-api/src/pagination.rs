@@ -6,6 +6,8 @@ pub struct Pagination {
     pub offset: Option<i64>,
     pub query: Option<String>,
     pub ignore_digital: Option<bool>,
+    pub local_multiplayer: Option<bool>,
+    pub online_multiplayer: Option<bool>,
     pub sort: Option<String>,
     pub cat: i64,
     pub franchise_id: Option<i32>,

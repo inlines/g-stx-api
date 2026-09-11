@@ -19,6 +19,10 @@ pub struct ProductProperties {
 
     #[diesel(sql_type = Text)]
     pub summary: String,
+    #[diesel(sql_type = Nullable<diesel::sql_types::Double>)]
+    pub total_rating: Option<f64>,
+    #[diesel(sql_type = Nullable<Integer>)]
+    pub total_rating_count: Option<i32>,
 
     #[diesel(sql_type = Nullable<Integer>)]
     pub first_release_date: Option<i32>,
@@ -108,6 +112,8 @@ struct ScreenshotUrl {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProductResponse {
     pub product: ProductProperties,
+    pub multiplayer: Vec<crate::game_features::MultiplayerMode>,
+    pub similar_games: Vec<crate::game_features::SimilarGame>,
     pub releases: Vec<ProductReleaseInfo>,
     pub screenshots: Vec<String>,
     pub companies: Vec<Company>,
@@ -205,7 +211,14 @@ pub async fn get(
         }
     }
 
+    let (multiplayer, similar_games) =
+        match crate::game_features::load(pool.clone(), product_id).await {
+            Ok(features) => features,
+            Err(_) => return HttpResponse::InternalServerError().finish(),
+        };
     HttpResponse::Ok().json(ProductResponse {
+        multiplayer,
+        similar_games,
         product: basic_info,
         releases,
         screenshots,
@@ -221,7 +234,7 @@ async fn get_product_basic_info(
     versions: Versions,
 ) -> Result<Option<ProductProperties>, String> {
     let cache_key = format!(
-        "cache:v2:{}:catalog_v{}:product_v{}",
+        "cache:v2:features:{}:catalog_v{}:product_v{}",
         build_product_cache_key(product_id),
         versions.catalog,
         versions.product
@@ -239,6 +252,8 @@ async fn get_product_basic_info(
             prod.id AS id,
             prod.name AS name,
             prod.summary AS summary,
+            prod.total_rating,
+            prod.total_rating_count,
             prod.first_release_date AS first_release_date,
             array_agg(DISTINCT an.name) FILTER (WHERE an.name IS NOT NULL) AS alternative_names,
             CASE 

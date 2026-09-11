@@ -1,3 +1,4 @@
+mod game_features;
 #[macro_use]
 extern crate actix_web;
 #[macro_use]

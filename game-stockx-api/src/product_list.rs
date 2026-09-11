@@ -36,6 +36,16 @@ pub struct ProductListItem {
 
     #[diesel(sql_type = Nullable<Double>)]
     pub total_rating: Option<f64>,
+    #[diesel(sql_type = Nullable<Integer>)]
+    pub total_rating_count: Option<i32>,
+    #[diesel(sql_type = Nullable<Integer>)]
+    pub local_players: Option<i32>,
+    #[diesel(sql_type = Nullable<Integer>)]
+    pub online_players: Option<i32>,
+    #[diesel(sql_type = Bool)]
+    pub local_multiplayer: bool,
+    #[diesel(sql_type = Bool)]
+    pub online_multiplayer: bool,
 }
 
 #[derive(QueryableByName)]
@@ -60,7 +70,7 @@ fn build_cache_key(
 ) -> String {
     // JSON encoding keeps delimiters in user-supplied search strings unambiguous.
     format!(
-        "cache:v2:catalog:serials:{}",
+        "cache:v2:catalog:features:{}",
         serde_json::json!([cat, limit, offset, query, ignore_digital, sort])
     )
 }
@@ -111,6 +121,11 @@ pub async fn list(
         Err(_) => return HttpResponse::InternalServerError().finish(),
     };
     cache_key.push_str(&format!(":catalog_v{}", versions.catalog));
+    cache_key.push_str(&format!(
+        ":local_{}:online_{}",
+        query.local_multiplayer.unwrap_or(false),
+        query.online_multiplayer.unwrap_or(false)
+    ));
     if !text_query.is_empty() {
         cache_key.push_str(&format!(":names_v{}", versions.names));
     }
@@ -131,10 +146,16 @@ pub async fn list(
     let db_text_query = format!("%{}%", text_query);
 
     let (order_column, order_direction, nulls_order) = match sort.as_str() {
+        "rating" => ("p.total_rating", "DESC", "NULLS LAST"),
         "date" => ("p.first_release_date", "ASC", "NULLS LAST"),
         _ => ("p.name", "ASC", "NULLS LAST"),
     };
 
+    let local = crate::game_features::LOCAL;
+    let online = crate::game_features::ONLINE;
+    let features_filter = format!(
+        " AND (NOT $9 OR EXISTS(SELECT 1 FROM product_multiplayer_modes m WHERE m.game=p.id AND m.platform=$4 AND {local})) AND (NOT $10 OR EXISTS(SELECT 1 FROM product_multiplayer_modes m WHERE m.game=p.id AND m.platform=$4 AND {online})) "
+    );
     let sql = format!(
         r#"
         SELECT 
@@ -148,6 +169,11 @@ pub async fn list(
             ) AS has_serials,
             p.first_release_date AS first_release_date,
             p.total_rating,
+            p.total_rating_count,
+            (SELECT NULLIF(MAX(GREATEST(m.offlinemax,m.offlinecoopmax)),0) FROM product_multiplayer_modes m WHERE m.game=p.id AND m.platform=$4) AS local_players,
+            (SELECT NULLIF(MAX(GREATEST(m.onlinemax,m.onlinecoopmax)),0) FROM product_multiplayer_modes m WHERE m.game=p.id AND m.platform=$4) AS online_players,
+            EXISTS(SELECT 1 FROM product_multiplayer_modes m WHERE m.game=p.id AND m.platform=$4 AND {local}) AS local_multiplayer,
+            EXISTS(SELECT 1 FROM product_multiplayer_modes m WHERE m.game=p.id AND m.platform=$4 AND {online}) AS online_multiplayer,
             p.game_type,
             p.parent_game,
             '//89.104.66.193/static/covers-full/' || c.id || '.jpg' AS image_url
@@ -177,6 +203,7 @@ pub async fn list(
               AND (($8 = 'developer' AND ic.developer = true) OR ($8 = 'publisher' AND ic.publisher = true))
         ))
         AND (p.game_type NOT IN (1, 2, 4, 13, 6, 5) OR p.game_type IS NULL)
+        {features_filter}
         ORDER BY {} {} {}, p.id ASC
         LIMIT $1 OFFSET $2
         "#,
@@ -192,9 +219,16 @@ pub async fn list(
         .bind::<Nullable<Integer>, _>(query.franchise_id)
         .bind::<Nullable<Integer>, _>(query.company_id)
         .bind::<Text, _>(company_role)
+        .bind::<Bool, _>(query.local_multiplayer.unwrap_or(false))
+        .bind::<Bool, _>(query.online_multiplayer.unwrap_or(false))
         .load::<ProductListItem>(conn);
 
-    let count_sql = r#"
+    let count_filter = features_filter
+        .replace("$9", "$7")
+        .replace("$10", "$8")
+        .replace("$4", "$1");
+    let count_sql = format!(
+        r#"
         SELECT COUNT(DISTINCT p.id) as total
         FROM products p
         WHERE EXISTS (
@@ -221,7 +255,9 @@ pub async fn list(
               AND (($6 = 'developer' AND ic.developer = true) OR ($6 = 'publisher' AND ic.publisher = true))
         ))
         AND (p.game_type NOT IN (1, 2, 4, 13, 6, 5) OR p.game_type IS NULL)
-    "#;
+        {count_filter}
+    "#
+    );
 
     let count_result = diesel::sql_query(count_sql)
         .bind::<diesel::sql_types::BigInt, _>(cat)
@@ -230,6 +266,8 @@ pub async fn list(
         .bind::<Nullable<Integer>, _>(query.franchise_id)
         .bind::<Nullable<Integer>, _>(query.company_id)
         .bind::<Text, _>(company_role)
+        .bind::<Bool, _>(query.local_multiplayer.unwrap_or(false))
+        .bind::<Bool, _>(query.online_multiplayer.unwrap_or(false))
         .load::<CountResult>(conn);
 
     match (results, count_result) {

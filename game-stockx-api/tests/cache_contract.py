@@ -26,7 +26,7 @@ def exercise(request, sql, redis, restart):
     before=metric('product_basic','hit')
     assert request('/api/products/1')['product']['name']=='Fixture'
     assert metric('product_basic','hit')==before+1
-    key=cli('KEYS','cache:v2:product_details:basic:1:*')
+    key=cli('KEYS','cache:v2:features:product_details:basic:1:*')
     assert 0<int(cli('TTL',key))<=86400
     cli('SET',key,'invalid json')
     before=metric('product_basic','error')

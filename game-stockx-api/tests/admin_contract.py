@@ -138,6 +138,8 @@ try:
             start()
         from cache_contract import exercise as exercise_cache
         exercise_cache(lambda path, **kw: request(path, normal, **kw), sql, redis, restart_for_cache_test)
+        from game_features_contract import exercise as exercise_features
+        exercise_features(lambda path, **kw: request(path, normal, **kw), sql)
         from serial_requests_contract import exercise as exercise_serial_requests
         exercise_serial_requests(base, admin, victim, sql)
         notification_test = subprocess.run(['node', str(ROOT / 'tests/request_notifications.mjs')], input=json.dumps({'base': base, 'admin': admin, 'ordinary': victim}), text=True, capture_output=True)
