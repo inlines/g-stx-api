@@ -2,7 +2,7 @@ use crate::auth::verify_jwt;
 use crate::pagination::Pagination;
 use crate::{
     DBPool,
-    redis::{RedisCacheExt, RedisPool},
+    redis::{self, Cache, RedisPool},
 };
 use actix_web::web::{self, Data};
 use actix_web::{HttpRequest, HttpResponse};
@@ -55,9 +55,10 @@ fn build_cache_key(
     ignore_digital: bool,
     sort: &str,
 ) -> String {
+    // JSON encoding keeps delimiters in user-supplied search strings unambiguous.
     format!(
-        "products:cat_{}:limit_{}:offset_{}:q_{}:dig_{}:sort_{}",
-        cat, limit, offset, query, ignore_digital, sort
+        "cache:v2:catalog:{}",
+        serde_json::json!([cat, limit, offset, query, ignore_digital, sort])
     )
 }
 
@@ -102,16 +103,16 @@ pub async fn list(
         cache_key.push_str(&format!(":company_{id}:role_{company_role}"));
     }
 
+    let versions = match redis::versions(pool.clone(), 0).await {
+        Ok(value) => value,
+        Err(_) => return HttpResponse::InternalServerError().finish(),
+    };
+    cache_key.push_str(&format!(":catalog_v{}", versions.catalog));
     if !text_query.is_empty() {
-        let revision = match crate::redis::name_revision(pool.clone()).await {
-            Ok(value) => value,
-            Err(_) => return HttpResponse::InternalServerError().finish(),
-        };
-        cache_key.push_str(&format!(":names_v{revision}"));
+        cache_key.push_str(&format!(":names_v{}", versions.names));
     }
-
-    if let Ok(mut redis_conn) = redis_pool.get().await
-        && let Ok(Some(cached)) = redis_conn.get_json::<ProductListResponse>(&cache_key).await
+    if let Some(cached) =
+        redis::read::<ProductListResponse>(&redis_pool, Cache::Catalog, &cache_key).await
     {
         return HttpResponse::Ok().json(cached);
     }
@@ -229,12 +230,8 @@ pub async fn list(
                 total_count: count.first().map(|c| c.total).unwrap_or(0),
             };
 
-            if let Ok(mut redis_conn) = redis_pool.get().await {
-                let ttl = if offset == 0 { 300 } else { 60 };
-                if let Err(e) = redis_conn.set_json(&cache_key, &response, ttl).await {
-                    eprintln!("Failed to cache response: {}", e);
-                }
-            }
+            let ttl = if offset == 0 { 300 } else { 60 };
+            redis::write(&redis_pool, Cache::Catalog, &cache_key, &response, ttl).await;
 
             HttpResponse::Ok().json(response)
         }

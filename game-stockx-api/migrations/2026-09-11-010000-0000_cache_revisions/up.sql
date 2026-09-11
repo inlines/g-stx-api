@@ -1,0 +1,6 @@
+CREATE TABLE IF NOT EXISTS catalog_cache_revision (
+    id INTEGER PRIMARY KEY CHECK (id=1),
+    revision BIGINT NOT NULL DEFAULT 0
+);
+INSERT INTO catalog_cache_revision(id,revision) VALUES(1,0) ON CONFLICT DO NOTHING;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS cache_revision BIGINT NOT NULL DEFAULT 0;

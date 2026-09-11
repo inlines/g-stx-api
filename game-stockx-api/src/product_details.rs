@@ -1,7 +1,7 @@
 use crate::auth::verify_jwt;
 use crate::{
     DBPool,
-    redis::{RedisCacheExt, RedisPool},
+    redis::{self, Cache, RedisPool, Versions},
 };
 use actix_web::web::{Data, Path};
 use actix_web::{HttpRequest, HttpResponse};
@@ -160,7 +160,11 @@ pub async fn get(
         }
     };
 
-    let basic_info = match get_product_basic_info(&pool, &redis_pool, product_id).await {
+    let versions = match redis::versions(pool.clone(), product_id).await {
+        Ok(value) => value,
+        Err(_) => return HttpResponse::InternalServerError().finish(),
+    };
+    let basic_info = match get_product_basic_info(&pool, &redis_pool, product_id, versions).await {
         Ok(Some(info)) => info,
         Ok(None) => return HttpResponse::NotFound().body("Product not found"),
         Err(e) => {
@@ -177,7 +181,7 @@ pub async fn get(
         }
     };
 
-    let companies = match get_product_companies(&pool, &redis_pool, product_id).await {
+    let companies = match get_product_companies(&pool, &redis_pool, product_id, versions).await {
         Ok(data) => data,
         Err(e) => {
             eprintln!("Error getting companies: {}", e);
@@ -185,7 +189,8 @@ pub async fn get(
         }
     };
 
-    let franschises = match get_product_franschises(&pool, &redis_pool, product_id).await {
+    let franschises = match get_product_franschises(&pool, &redis_pool, product_id, versions).await
+    {
         Ok(data) => data,
         Err(e) => {
             eprintln!("Error getting franschises: {}", e);
@@ -213,18 +218,16 @@ async fn get_product_basic_info(
     pool: &Data<DBPool>,
     redis_pool: &Data<RedisPool>,
     product_id: i32,
+    versions: Versions,
 ) -> Result<Option<ProductProperties>, String> {
-    let revision = crate::redis::name_revision(pool.clone())
-        .await
-        .map_err(|e| e.to_string())?;
     let cache_key = format!(
-        "{}:names_v{}",
+        "cache:v2:{}:catalog_v{}:product_v{}",
         build_product_cache_key(product_id),
-        revision
+        versions.catalog,
+        versions.product
     );
-
-    if let Ok(mut redis_conn) = redis_pool.get().await
-        && let Ok(Some(cached)) = redis_conn.get_json::<ProductProperties>(&cache_key).await
+    if let Some(cached) =
+        redis::read::<ProductProperties>(redis_pool, Cache::Basic, &cache_key).await
     {
         return Ok(Some(cached));
     }
@@ -256,10 +259,8 @@ async fn get_product_basic_info(
         .optional()
         .map_err(|e| e.to_string())?;
 
-    if let Some(ref product_info) = product_info
-        && let Ok(mut redis_conn) = redis_pool.get().await
-    {
-        let _ = redis_conn.set_json(&cache_key, product_info, 86400).await;
+    if let Some(ref product_info) = product_info {
+        redis::write(redis_pool, Cache::Basic, &cache_key, product_info, 86400).await;
     }
     Ok(product_info)
 }
@@ -323,11 +324,15 @@ async fn get_product_companies(
     pool: &Data<DBPool>,
     redis_pool: &Data<RedisPool>,
     product_id: i32,
+    versions: Versions,
 ) -> Result<Vec<Company>, String> {
-    let cache_key = build_product_companies_cache_key(product_id);
-
-    if let Ok(mut redis_conn) = redis_pool.get().await
-        && let Ok(Some(cached)) = redis_conn.get_json::<Vec<Company>>(&cache_key).await
+    let cache_key = format!(
+        "cache:v2:{}:catalog_v{}",
+        build_product_companies_cache_key(product_id),
+        versions.catalog
+    );
+    if let Some(cached) =
+        redis::read::<Vec<Company>>(redis_pool, Cache::Companies, &cache_key).await
     {
         return Ok(cached);
     }
@@ -354,11 +359,14 @@ async fn get_product_companies(
         .load::<Company>(conn)
         .map_err(|e| e.to_string())?;
 
-    if let Ok(mut redis_conn) = redis_pool.get().await {
-        let _ = redis_conn
-            .set_json(&cache_key, &product_companies, 86400)
-            .await;
-    }
+    redis::write(
+        redis_pool,
+        Cache::Companies,
+        &cache_key,
+        &product_companies,
+        86400,
+    )
+    .await;
     Ok(product_companies)
 }
 
@@ -366,11 +374,15 @@ async fn get_product_franschises(
     pool: &Data<DBPool>,
     redis_pool: &Data<RedisPool>,
     product_id: i32,
+    versions: Versions,
 ) -> Result<Vec<Franschise>, String> {
-    let cache_key = build_product_franschises_cache_key(product_id);
-
-    if let Ok(mut redis_conn) = redis_pool.get().await
-        && let Ok(Some(cached)) = redis_conn.get_json::<Vec<Franschise>>(&cache_key).await
+    let cache_key = format!(
+        "cache:v2:{}:catalog_v{}",
+        build_product_franschises_cache_key(product_id),
+        versions.catalog
+    );
+    if let Some(cached) =
+        redis::read::<Vec<Franschise>>(redis_pool, Cache::Franchises, &cache_key).await
     {
         return Ok(cached);
     }
@@ -396,10 +408,13 @@ async fn get_product_franschises(
         .load::<Franschise>(conn)
         .map_err(|e| e.to_string())?;
 
-    if let Ok(mut redis_conn) = redis_pool.get().await {
-        let _ = redis_conn
-            .set_json(&cache_key, &product_franschise, 86400)
-            .await;
-    }
+    redis::write(
+        redis_pool,
+        Cache::Franchises,
+        &cache_key,
+        &product_franschise,
+        86400,
+    )
+    .await;
     Ok(product_franschise)
 }

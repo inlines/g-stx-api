@@ -371,6 +371,7 @@ async fn accept(
             diesel::sql_query("INSERT INTO alternative_names(id,product_id,name,comment) VALUES(nextval('local_alternative_name_id'),$1,$2,'Community contribution')")
                 .bind::<Integer,_>(product_id).bind::<Text,_>(&serial).execute(conn)?;
             diesel::sql_query("UPDATE catalog_name_revision SET revision=revision+1 WHERE id=1").execute(conn)?;
+            diesel::sql_query("UPDATE products SET cache_revision=cache_revision+1 WHERE id=$1").bind::<Integer,_>(product_id).execute(conn)?;
         } else {
             let release_id = item.release_id.ok_or(AdminError::Internal)?;
             release(conn, release_id)?;

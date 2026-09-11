@@ -133,6 +133,11 @@ try:
             UPDATE users SET avatar=decode('89504e47','hex') WHERE user_login='victim';
             INSERT INTO messages(sender_login,recipient_login,body) VALUES('victim','ordinary','out'),('ordinary','victim','in'),('ordinary','segasanshiro','keep');
         """)
+        def restart_for_cache_test():
+            process.terminate(); process.wait(timeout=10)
+            start()
+        from cache_contract import exercise as exercise_cache
+        exercise_cache(lambda path, **kw: request(path, normal, **kw), sql, redis, restart_for_cache_test)
         from serial_requests_contract import exercise as exercise_serial_requests
         exercise_serial_requests(base, admin, victim, sql)
         notification_test = subprocess.run(['node', str(ROOT / 'tests/request_notifications.mjs')], input=json.dumps({'base': base, 'admin': admin, 'ordinary': victim}), text=True, capture_output=True)

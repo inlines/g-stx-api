@@ -47,6 +47,7 @@ pub type DBPooledConnection = PooledConnection<ConnectionManager<PgConnection>>;
 async fn main() -> io::Result<()> {
     dotenv().ok();
     metrics::initialize();
+    redis::initialize_metrics();
     env_logger::init_from_env(
         env_logger::Env::default().default_filter_or("actix_web=debug,actix_server=info"),
     );

@@ -1,6 +1,6 @@
 use crate::{
     DBPool,
-    redis::{RedisCacheExt, RedisPool},
+    redis::{self, Cache, RedisPool},
 };
 use actix_web::{HttpResponse, get, web::Data};
 use diesel::{
@@ -50,12 +50,13 @@ async fn load_from_db(pool: &Data<DBPool>) -> Result<Vec<PlatformItem>, HttpResp
 
 #[get("/platforms")]
 pub async fn get_platforms(pool: Data<DBPool>, redis_pool: Data<RedisPool>) -> HttpResponse {
-    const CACHE_KEY: &str = "platforms:active_list";
-    const CACHE_TTL_SEC: usize = 86400;
-
-    // 1. Try to get from cache
-    if let Ok(mut conn) = redis_pool.get().await
-        && let Ok(Some(cached)) = conn.get_json::<Vec<PlatformItem>>(CACHE_KEY).await
+    let versions = match redis::versions(pool.clone(), 0).await {
+        Ok(value) => value,
+        Err(_) => return HttpResponse::InternalServerError().finish(),
+    };
+    let cache_key = format!("cache:v2:platforms:catalog_v{}", versions.catalog);
+    if let Some(cached) =
+        redis::read::<Vec<PlatformItem>>(&redis_pool, Cache::Platforms, &cache_key).await
     {
         return HttpResponse::Ok().json(cached);
     }
@@ -66,10 +67,7 @@ pub async fn get_platforms(pool: Data<DBPool>, redis_pool: Data<RedisPool>) -> H
         Err(resp) => return resp,
     };
 
-    // 3. Save to cache (ignore errors)
-    if let Ok(mut conn) = redis_pool.get().await {
-        let _ = conn.set_json(CACHE_KEY, &items, CACHE_TTL_SEC).await;
-    }
+    redis::write(&redis_pool, Cache::Platforms, &cache_key, &items, 86400).await;
 
     HttpResponse::Ok().json(items)
 }
