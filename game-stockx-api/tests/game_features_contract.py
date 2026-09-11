@@ -1,6 +1,7 @@
 """Feature behaviour in the admin suite's disposable databases."""
 def exercise(request,sql):
     sql("""INSERT INTO products(id,name,summary,total_rating) VALUES(2,'Rated higher','',95),(3,'Unrated','',NULL);
+      UPDATE products SET first_release_date=1500000000 WHERE id IN (2,3);
       INSERT INTO platforms(id,name) VALUES(167,'PS5');
       INSERT INTO product_platforms(product_id,platform_id,digital_only) VALUES(2,48,false),(3,48,false),(1,167,false);
       UPDATE products SET total_rating=80,total_rating_count=25,similar_game_ids=ARRAY[2,99999,1] WHERE id=1;

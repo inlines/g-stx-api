@@ -70,8 +70,27 @@ fn build_cache_key(
 ) -> String {
     // JSON encoding keeps delimiters in user-supplied search strings unambiguous.
     format!(
-        "cache:v2:catalog:features:{}",
+        "cache:v3:catalog:visibility:{}",
         serde_json::json!([cat, limit, offset, query, ignore_digital, sort])
+    )
+}
+
+// A bundle/parent link or IGDB game type cannot establish whether a standalone
+// physical edition exists on this platform. A non-digital release with a serial
+// takes precedence over those heuristics; unknown editions are searchable only.
+// Arguments are internal SQL placeholders, never user input. Shared with COUNT.
+fn visibility_filter(platform: &str, digital: &str, search: &str, unreleased: &str) -> String {
+    format!(
+        r#"
+        AND ({unreleased} OR p.first_release_date IS NOT NULL)
+        AND ({search} <> '%%' OR EXISTS (
+            SELECT 1 FROM releases r
+            CROSS JOIN LATERAL unnest(r.serial) AS serial_number(value)
+            WHERE r.product_id=p.id AND r.platform={platform}
+              AND NOT r.digital_only AND btrim(serial_number.value) <> ''
+        ) OR (NOT {digital}
+             AND (p.game_type NOT IN (1, 2, 4, 13, 6, 5) OR p.game_type IS NULL)))
+    "#
     )
 }
 
@@ -89,9 +108,10 @@ pub async fn list(
     let limit = query.limit.unwrap_or(100);
     let offset = query.offset.unwrap_or(0);
     let cat = query.cat;
-    let text_query = query.query.clone().unwrap_or_default();
+    let text_query = query.query.as_deref().unwrap_or_default().trim().to_owned();
     let ignore_digital = query.ignore_digital.unwrap_or(false);
     let sort = query.sort.clone().unwrap_or_default();
+    let include_unreleased = query.include_unreleased.unwrap_or(false);
 
     if limit > 20 || offset > 20 {
         // Извлекаем токен из заголовка
@@ -108,6 +128,7 @@ pub async fn list(
     }
 
     let mut cache_key = build_cache_key(cat, limit, offset, &text_query, ignore_digital, &sort);
+    cache_key.push_str(&format!(":unreleased_{include_unreleased}"));
     if let Some(id) = query.franchise_id {
         cache_key.push_str(&format!(":franchise_{id}"));
     }
@@ -143,7 +164,14 @@ pub async fn list(
         }
     };
 
-    let db_text_query = format!("%{}%", text_query);
+    // Treat LIKE metacharacters as text, so "%" cannot reveal every uncertain game.
+    let db_text_query = format!(
+        "%{}%",
+        text_query
+            .replace('\\', "\\\\")
+            .replace('%', "\\%")
+            .replace('_', "\\_")
+    );
 
     let (order_column, order_direction, nulls_order) = match sort.as_str() {
         "rating" => ("p.total_rating", "DESC", "NULLS LAST"),
@@ -156,6 +184,7 @@ pub async fn list(
     let features_filter = format!(
         " AND (NOT $9 OR EXISTS(SELECT 1 FROM product_multiplayer_modes m WHERE m.game=p.id AND m.platform=$4 AND {local})) AND (NOT $10 OR EXISTS(SELECT 1 FROM product_multiplayer_modes m WHERE m.game=p.id AND m.platform=$4 AND {online})) "
     );
+    let visibility = visibility_filter("$4", "$5", "$3", "$11");
     let sql = format!(
         r#"
         SELECT 
@@ -165,6 +194,7 @@ pub async fn list(
                 SELECT 1 FROM releases r
                 CROSS JOIN LATERAL unnest(r.serial) AS serial_number(value)
                 WHERE r.product_id = p.id AND r.platform = $4
+                  AND NOT r.digital_only
                   AND btrim(serial_number.value) <> ''
             ) AS has_serials,
             p.first_release_date AS first_release_date,
@@ -202,7 +232,7 @@ pub async fn list(
             WHERE ic.game = p.id AND ic.company = $7
               AND (($8 = 'developer' AND ic.developer = true) OR ($8 = 'publisher' AND ic.publisher = true))
         ))
-        AND (p.game_type NOT IN (1, 2, 4, 13, 6, 5) OR p.game_type IS NULL)
+        {visibility}
         {features_filter}
         ORDER BY {} {} {}, p.id ASC
         LIMIT $1 OFFSET $2
@@ -221,12 +251,14 @@ pub async fn list(
         .bind::<Text, _>(company_role)
         .bind::<Bool, _>(query.local_multiplayer.unwrap_or(false))
         .bind::<Bool, _>(query.online_multiplayer.unwrap_or(false))
+        .bind::<Bool, _>(include_unreleased)
         .load::<ProductListItem>(conn);
 
     let count_filter = features_filter
         .replace("$9", "$7")
         .replace("$10", "$8")
         .replace("$4", "$1");
+    let visibility = visibility_filter("$1", "$3", "$2", "$9");
     let count_sql = format!(
         r#"
         SELECT COUNT(DISTINCT p.id) as total
@@ -254,7 +286,7 @@ pub async fn list(
             WHERE ic.game = p.id AND ic.company = $5
               AND (($6 = 'developer' AND ic.developer = true) OR ($6 = 'publisher' AND ic.publisher = true))
         ))
-        AND (p.game_type NOT IN (1, 2, 4, 13, 6, 5) OR p.game_type IS NULL)
+        {visibility}
         {count_filter}
     "#
     );
@@ -268,6 +300,7 @@ pub async fn list(
         .bind::<Text, _>(company_role)
         .bind::<Bool, _>(query.local_multiplayer.unwrap_or(false))
         .bind::<Bool, _>(query.online_multiplayer.unwrap_or(false))
+        .bind::<Bool, _>(include_unreleased)
         .load::<CountResult>(conn);
 
     match (results, count_result) {

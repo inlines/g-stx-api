@@ -123,7 +123,7 @@ try:
         start()
         request('/api/admin/users', admin)
         assert sql('SELECT count(*) FROM auth_signing_keys') == '1'
-        sql("""INSERT INTO products(id,name,summary) VALUES(1,'Fixture','');
+        sql("""INSERT INTO products(id,name,summary,first_release_date) VALUES(1,'Fixture','',1500000000);
             INSERT INTO platforms(id,name,abbreviation) VALUES(48,'PlayStation 4','PS4');
             INSERT INTO regions(id,name) VALUES(1,'Europe');
             INSERT INTO releases(id,product_id,platform,release_region) VALUES(1,1,48,1);
@@ -140,6 +140,8 @@ try:
         exercise_cache(lambda path, **kw: request(path, normal, **kw), sql, redis, restart_for_cache_test)
         from game_features_contract import exercise as exercise_features
         exercise_features(lambda path, **kw: request(path, normal, **kw), sql)
+        from catalog_visibility_contract import exercise as exercise_visibility
+        exercise_visibility(lambda path, **kw: request(path, normal, **kw), sql)
         from admin_direct_contract import exercise as exercise_direct
         exercise_direct(request, sql, admin, victim)
         from serial_requests_contract import exercise as exercise_serial_requests

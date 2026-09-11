@@ -5,6 +5,7 @@ pub struct Pagination {
     pub limit: Option<i64>,
     pub offset: Option<i64>,
     pub query: Option<String>,
+    pub include_unreleased: Option<bool>,
     pub ignore_digital: Option<bool>,
     pub local_multiplayer: Option<bool>,
     pub online_multiplayer: Option<bool>,

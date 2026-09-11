@@ -26,7 +26,7 @@ def exercise(label, binary, pg, redis, W, franchises=False, companies=False):
         http_port = probe.getsockname()[1]
     env = {**os.environ, 'DATABASE_URL': f'postgres://postgres@127.0.0.1:{dbport}/postgres', 'REDIS_URL': f'redis://127.0.0.1:{redisport}', 'BIND_ADDRESS': f'127.0.0.1:{http_port}', 'RUST_LOG': 'error'}
     run(['diesel', 'migration', 'run', '--config-file', '/dev/null', '--migration-dir', str(ROOT / 'migrations')], env=env, cwd=W)
-    sql("INSERT INTO covers VALUES(1,'cover');\n    INSERT INTO platforms(id,abbreviation,name,active,total_games) VALUES(48,'PS4','PlayStation 4',true,2);\n    INSERT INTO regions VALUES(1,'Europe');\n    INSERT INTO products(id,name,summary,cover_id) VALUES(1,'Alpha','Summary',1),(2,'Beta','Summary',1);\n    INSERT INTO releases(id,product_id,platform,release_region,serial,release_date) VALUES(1,1,48,1,ARRAY['ABC'],1000),(2,2,48,1,ARRAY['DEF'],2000);\n    INSERT INTO product_platforms(product_id,platform_id) VALUES(1,48),(2,48);\n    ")
+    sql("INSERT INTO covers VALUES(1,'cover');\n    INSERT INTO platforms(id,abbreviation,name,active,total_games) VALUES(48,'PS4','PlayStation 4',true,2);\n    INSERT INTO regions VALUES(1,'Europe');\n    INSERT INTO products(id,name,summary,cover_id,first_release_date) VALUES(1,'Alpha','Summary',1,1000),(2,'Beta','Summary',1,2000);\n    INSERT INTO releases(id,product_id,platform,release_region,serial,release_date) VALUES(1,1,48,1,ARRAY['ABC'],1000),(2,2,48,1,ARRAY['DEF'],2000);\n    INSERT INTO product_platforms(product_id,platform_id) VALUES(1,48),(2,48);\n    ")
     run(['docker', 'exec', redis, 'redis-cli', 'FLUSHALL'])
     log = open(W / (label + '-server.log'), 'w')
     process = subprocess.Popen([binary], cwd=W, env=env, stdout=log, stderr=log)

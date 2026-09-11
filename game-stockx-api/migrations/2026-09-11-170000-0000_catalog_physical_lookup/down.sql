@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS idx_releases_physical_product_platform;
