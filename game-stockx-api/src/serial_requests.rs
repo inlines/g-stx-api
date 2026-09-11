@@ -377,6 +377,7 @@ async fn accept(
             release(conn, release_id)?;
             diesel::sql_query("UPDATE releases SET serial = CASE WHEN EXISTS(SELECT 1 FROM unnest(serial) s WHERE upper(btrim(s))=$1) THEN serial ELSE array_append(COALESCE(serial,ARRAY[]::text[]),$1) END WHERE id=$2")
                 .bind::<Text,_>(&serial).bind::<Integer,_>(release_id).execute(conn)?;
+            diesel::sql_query("UPDATE catalog_cache_revision SET revision=revision+1 WHERE id=1").execute(conn)?;
         }
         diesel::sql_query("UPDATE release_serial_requests SET status='accepted',reviewed_at=now(),reviewed_by=$1,accepted_serial=$3 WHERE id=$2")
             .bind::<Integer,_>(user.uid).bind::<Integer,_>(*id).bind::<Text,_>(&serial).execute(conn)?;
@@ -384,7 +385,7 @@ async fn accept(
             .bind::<Integer,_>(*id).execute(conn)?;
         Ok(())
     })).await?;
-    // Name acceptance changes the cache revision in the same transaction.
+    // Accepted names and serials invalidate their cached catalogue data atomically.
     Ok(HttpResponse::NoContent().finish())
 }
 async fn delete_request(

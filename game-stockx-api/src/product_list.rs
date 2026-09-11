@@ -8,13 +8,16 @@ use actix_web::web::{self, Data};
 use actix_web::{HttpRequest, HttpResponse};
 use diesel::RunQueryDsl;
 use diesel::prelude::*;
-use diesel::sql_types::{BigInt, Double, Integer, Nullable, Text};
+use diesel::sql_types::{BigInt, Bool, Double, Integer, Nullable, Text};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize, QueryableByName)]
 pub struct ProductListItem {
     #[diesel(sql_type = Integer)]
     pub id: i32,
+
+    #[diesel(sql_type = Bool)]
+    pub has_serials: bool,
 
     #[diesel(sql_type = Text)]
     pub name: String,
@@ -57,7 +60,7 @@ fn build_cache_key(
 ) -> String {
     // JSON encoding keeps delimiters in user-supplied search strings unambiguous.
     format!(
-        "cache:v2:catalog:{}",
+        "cache:v2:catalog:serials:{}",
         serde_json::json!([cat, limit, offset, query, ignore_digital, sort])
     )
 }
@@ -137,6 +140,12 @@ pub async fn list(
         SELECT 
             p.id AS id,
             p.name AS name,
+            EXISTS (
+                SELECT 1 FROM releases r
+                CROSS JOIN LATERAL unnest(r.serial) AS serial_number(value)
+                WHERE r.product_id = p.id AND r.platform = $4
+                  AND btrim(serial_number.value) <> ''
+            ) AS has_serials,
             p.first_release_date AS first_release_date,
             p.total_rating,
             p.game_type,

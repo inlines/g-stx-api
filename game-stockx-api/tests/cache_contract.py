@@ -8,6 +8,17 @@ def exercise(request, sql, redis, restart):
     def metric(cache, result):
         prefix=f'app_cache_reads_total{{cache="{cache}",result="{result}"}} '
         return float(next(line[len(prefix):] for line in request('/metrics').splitlines() if line.startswith(prefix)))
+    sql("INSERT INTO product_platforms(product_id,platform_id,digital_only) VALUES(1,48,false) ON CONFLICT DO NOTHING;")
+    def serial_flag():
+        return request('/api/products?cat=48&limit=15&offset=0')['items'][0]['has_serials']
+    assert serial_flag() is False
+    sql("UPDATE releases SET serial=ARRAY['', '   '] WHERE id=1; UPDATE catalog_cache_revision SET revision=revision+1 WHERE id=1;")
+    assert serial_flag() is False
+    sql("INSERT INTO platforms(id,name) VALUES(167,'PS5'); INSERT INTO releases(id,product_id,platform,release_region,serial) VALUES(999,1,167,1,ARRAY['PPSA-123']); UPDATE catalog_cache_revision SET revision=revision+1 WHERE id=1;")
+    assert serial_flag() is False, 'Other platforms must not hide the missing-serial badge'
+    sql("UPDATE releases SET serial=ARRAY['CUSA-123'] WHERE id=1; UPDATE catalog_cache_revision SET revision=revision+1 WHERE id=1;")
+    assert serial_flag() is True
+    sql("DELETE FROM releases WHERE id=999; DELETE FROM platforms WHERE id=167; UPDATE releases SET serial=NULL WHERE id=1; UPDATE catalog_cache_revision SET revision=revision+1 WHERE id=1;")
     cli('FLUSHDB')
     before=metric('product_basic','miss')
     assert request('/api/products/1')['product']['name']=='Fixture'
