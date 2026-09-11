@@ -13,6 +13,12 @@ pub(crate) struct TrackReleaseRequest {
 #[derive(Serialize, QueryableByName)]
 pub(crate) struct CollectionItem {
     #[diesel(sql_type = Integer)]
+    pub(crate) platform_id: i32,
+    #[diesel(sql_type = Nullable<Integer>)]
+    pub(crate) region_id: Option<i32>,
+    #[diesel(sql_type = Bool)]
+    pub(crate) digital_only: bool,
+    #[diesel(sql_type = Integer)]
     pub(crate) release_id: i32,
 
     #[diesel(sql_type = Nullable<Array<Text>>)]

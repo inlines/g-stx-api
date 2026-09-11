@@ -142,6 +142,8 @@ try:
         exercise_features(lambda path, **kw: request(path, normal, **kw), sql)
         from catalog_visibility_contract import exercise as exercise_visibility
         exercise_visibility(lambda path, **kw: request(path, normal, **kw), sql)
+        from region_contract import exercise as exercise_regions
+        exercise_regions(lambda path, **kw: request(path, normal, **kw), sql)
         from admin_direct_contract import exercise as exercise_direct
         exercise_direct(request, sql, admin, victim)
         from serial_requests_contract import exercise as exercise_serial_requests

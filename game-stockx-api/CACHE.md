@@ -2,7 +2,7 @@
 
 Redis is a disposable cache, never a source of user-owned data. Reads distinguish hit, miss and error. Writes are best-effort. Each operation has a 250 ms deadline including checkout; a request can execute several operations. Multiplexed connections preserve protocol response ordering when a deadline cancels a future.
 
-Catalogue keys use cache:v4:catalog:visibility; other keys use cache:v2, with a PostgreSQL catalog revision. Bulk IGDB imports increment catalog_cache_revision in the same transaction as changes. Name approvals increment catalog_name_revision (search) and products.cache_revision (that product) in their transaction. Read revisions before cache/DB data: in-flight requests using a previous revision cannot repopulate current keys. Serial approvals increment catalog_cache_revision too, refreshing the platform-specific has_serials catalogue flag. Old keys expire naturally.
+Catalogue keys use cache:v5:catalog:regions; platform totals use cache:v3:platforms:regions; other keys use cache:v2, with a PostgreSQL catalog revision. Bulk IGDB imports increment catalog_cache_revision in the same transaction as changes. Name approvals increment catalog_name_revision (search) and products.cache_revision (that product) in their transaction. Read revisions before cache/DB data: in-flight requests using a previous revision cannot repopulate current keys. Serial approvals increment catalog_cache_revision too, refreshing the platform-specific has_serials catalogue flag. Old keys expire naturally.
 
 TTLs: catalogue offset=0: 300s, other pages: 60s; basic game/company/franchise/platform data: 86400s. Releases/sellers/screenshots and personal/social data are not newly cached. Manual catalogue SQL must increment catalog_cache_revision in the same transaction. This policy requires the cache_revisions migration and matching IGDB export.cjs/cron.sh; do not deploy backend alone.
 
@@ -19,3 +19,9 @@ Manual features/load.sh import updates ratings, related IDs and per-game/per-pla
 With `ignore_digital=true`, the selected `product_platforms` entry must have `digital_only=false`, as before. Missing serials do not hide games or require text search. The original game-type exclusions apply both to browsing and searching. `has_serials` again reports any non-blank serial on the selected platform, irrespective of the release's digital flag.
 
 The catalogue namespace was advanced to v4 to avoid serving cached results of the reverted physical-edition policy. The date switch remains in cache keys. No data is rewritten. The previously applied `catalog_physical_lookup` index migration is retained in migration history; it does not change visibility.
+
+## Regional filters and totals
+
+Catalogue `regions` is a canonical comma-separated union of `europe`, `america`, `other`; empty means all. It participates in both result/count SQL and the cache key. Matching releases must belong to the selected platform. Europe is region 1, America is North America (2); Brazil, worldwide and unknown regions are Other.
+
+Platform totals count distinct products with releases, excluding digital releases and platform-level digital-only games. Each regional total is independent: a game can occur in several groups. These totals do not depend on catalogue search or date filters. Collection numerators follow the same regional and digital rules. Existing catalogue revision invalidation refreshes these totals; no new migration is required.

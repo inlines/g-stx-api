@@ -8,7 +8,7 @@ use actix_web::web::{self, Data};
 use actix_web::{HttpRequest, HttpResponse};
 use diesel::RunQueryDsl;
 use diesel::prelude::*;
-use diesel::sql_types::{BigInt, Bool, Double, Integer, Nullable, Text};
+use diesel::sql_types::{Array, BigInt, Bool, Double, Integer, Nullable, Text};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize, QueryableByName)]
@@ -70,7 +70,7 @@ fn build_cache_key(
 ) -> String {
     // JSON encoding keeps delimiters in user-supplied search strings unambiguous.
     format!(
-        "cache:v4:catalog:visibility:{}",
+        "cache:v5:catalog:regions:{}",
         serde_json::json!([cat, limit, offset, query, ignore_digital, sort])
     )
 }
@@ -86,6 +86,15 @@ fn visibility_filter(unreleased: &str) -> String {
     )
 }
 
+// EXISTS keeps a game unique even when several releases match selected regions.
+fn build_region_filter(platform: &str, regions: &str) -> String {
+    format!(" AND (cardinality({regions}::text[])=0 OR EXISTS (
+        SELECT 1 FROM releases region_release
+        WHERE region_release.product_id=p.id AND region_release.platform={platform}
+        AND (CASE region_release.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' ELSE 'other' END)=ANY({regions})
+    )) ")
+}
+
 #[get("/products")]
 pub async fn list(
     pool: Data<DBPool>,
@@ -93,6 +102,10 @@ pub async fn list(
     query: web::Query<Pagination>,
     req: HttpRequest,
 ) -> HttpResponse {
+    let regions = match query.region_groups() {
+        Ok(regions) => regions,
+        Err(()) => return HttpResponse::BadRequest().body("Invalid region group"),
+    };
     let company_role = query.company_role.as_deref().unwrap_or("developer");
     if !matches!(company_role, "developer" | "publisher") {
         return HttpResponse::BadRequest().body("Invalid company role");
@@ -121,6 +134,7 @@ pub async fn list(
 
     let mut cache_key = build_cache_key(cat, limit, offset, &text_query, ignore_digital, &sort);
     cache_key.push_str(&format!(":unreleased_{include_unreleased}"));
+    cache_key.push_str(&format!(":regions_{}", regions.join(",")));
     if let Some(id) = query.franchise_id {
         cache_key.push_str(&format!(":franchise_{id}"));
     }
@@ -170,6 +184,7 @@ pub async fn list(
         " AND (NOT $9 OR EXISTS(SELECT 1 FROM product_multiplayer_modes m WHERE m.game=p.id AND m.platform=$4 AND {local})) AND (NOT $10 OR EXISTS(SELECT 1 FROM product_multiplayer_modes m WHERE m.game=p.id AND m.platform=$4 AND {online})) "
     );
     let visibility = visibility_filter("$11");
+    let region_filter = build_region_filter("$4", "$12");
     let sql = format!(
         r#"
         SELECT 
@@ -217,6 +232,7 @@ pub async fn list(
               AND (($8 = 'developer' AND ic.developer = true) OR ($8 = 'publisher' AND ic.publisher = true))
         ))
         {visibility}
+        {region_filter}
         {features_filter}
         ORDER BY {} {} {}, p.id ASC
         LIMIT $1 OFFSET $2
@@ -236,6 +252,7 @@ pub async fn list(
         .bind::<Bool, _>(query.local_multiplayer.unwrap_or(false))
         .bind::<Bool, _>(query.online_multiplayer.unwrap_or(false))
         .bind::<Bool, _>(include_unreleased)
+        .bind::<Array<Text>, _>(&regions)
         .load::<ProductListItem>(conn);
 
     let count_filter = features_filter
@@ -243,6 +260,7 @@ pub async fn list(
         .replace("$10", "$8")
         .replace("$4", "$1");
     let visibility = visibility_filter("$9");
+    let region_filter = build_region_filter("$1", "$10");
     let count_sql = format!(
         r#"
         SELECT COUNT(DISTINCT p.id) as total
@@ -271,6 +289,7 @@ pub async fn list(
               AND (($6 = 'developer' AND ic.developer = true) OR ($6 = 'publisher' AND ic.publisher = true))
         ))
         {visibility}
+        {region_filter}
         {count_filter}
     "#
     );
@@ -285,6 +304,7 @@ pub async fn list(
         .bind::<Bool, _>(query.local_multiplayer.unwrap_or(false))
         .bind::<Bool, _>(query.online_multiplayer.unwrap_or(false))
         .bind::<Bool, _>(include_unreleased)
+        .bind::<Array<Text>, _>(&regions)
         .load::<CountResult>(conn);
 
     match (results, count_result) {

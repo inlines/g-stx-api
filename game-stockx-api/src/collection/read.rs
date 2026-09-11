@@ -109,6 +109,9 @@ async fn get_collection(
             uhr.release_id,
             uhr.price,
             r.release_date,
+            r.platform AS platform_id,
+            r.release_region AS region_id,
+            (r.digital_only OR EXISTS(SELECT 1 FROM product_platforms pp WHERE pp.product_id=r.product_id AND pp.platform_id=r.platform AND pp.digital_only)) AS digital_only,
             r.serial,
             p.name as platform_name,
             prod.id as product_id,
@@ -120,10 +123,10 @@ async fn get_collection(
         INNER JOIN releases AS r ON uhr.release_id = r.id
         INNER JOIN platforms AS p ON r.platform = p.id
         INNER JOIN products AS prod ON r.product_id = prod.id
-        INNER JOIN covers AS cover ON cover.id = prod.cover_id
-        INNER JOIN regions as reg on reg.id = r.release_region 
+        LEFT JOIN covers AS cover ON cover.id = prod.cover_id
+        LEFT JOIN regions as reg on reg.id = r.release_region
         WHERE uhr.user_login = $1 AND p.id = $2
-        ORDER BY prod.name
+        ORDER BY prod.name, r.id
         LIMIT $3 OFFSET $4
     "#;
 
@@ -187,6 +190,9 @@ async fn get_collection_by_login(
         SELECT 
             uhr.release_id,
             r.release_date,
+            r.platform AS platform_id,
+            r.release_region AS region_id,
+            (r.digital_only OR EXISTS(SELECT 1 FROM product_platforms pp WHERE pp.product_id=r.product_id AND pp.platform_id=r.platform AND pp.digital_only)) AS digital_only,
             r.serial,
             p.name as platform_name,
             prod.id as product_id,
@@ -199,10 +205,10 @@ async fn get_collection_by_login(
         INNER JOIN releases AS r ON uhr.release_id = r.id
         INNER JOIN platforms AS p ON r.platform = p.id
         INNER JOIN products AS prod ON r.product_id = prod.id
-        INNER JOIN covers AS cover ON cover.id = prod.cover_id
-        INNER JOIN regions as reg on reg.id = r.release_region 
+        LEFT JOIN covers AS cover ON cover.id = prod.cover_id
+        LEFT JOIN regions as reg on reg.id = r.release_region
         WHERE uhr.user_login = $1
-        ORDER BY prod.name
+        ORDER BY prod.name, r.id
         LIMIT $2 OFFSET $3
     "#;
 
@@ -244,6 +250,9 @@ async fn get_wishlist(
         SELECT 
             uhw.release_id,
             r.release_date,
+            r.platform AS platform_id,
+            r.release_region AS region_id,
+            (r.digital_only OR EXISTS(SELECT 1 FROM product_platforms pp WHERE pp.product_id=r.product_id AND pp.platform_id=r.platform AND pp.digital_only)) AS digital_only,
             p.name as platform_name,
             prod.id as product_id,
             prod.name AS product_name,
@@ -256,10 +265,10 @@ async fn get_wishlist(
         INNER JOIN releases AS r ON uhw.release_id = r.id
         INNER JOIN platforms AS p ON r.platform = p.id
         INNER JOIN products AS prod ON r.product_id = prod.id
-        INNER JOIN covers AS cover ON cover.id = prod.cover_id
-        INNER JOIN regions as reg on reg.id = r.release_region 
+        LEFT JOIN covers AS cover ON cover.id = prod.cover_id
+        LEFT JOIN regions as reg on reg.id = r.release_region
         WHERE uhw.user_login = $1 AND p.id = $2
-        ORDER BY prod.name
+        ORDER BY prod.name, r.id
         LIMIT $3 OFFSET $4
     "#;
 
