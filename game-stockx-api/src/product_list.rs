@@ -5,7 +5,7 @@ use crate::{
     redis::{self, Cache, RedisPool},
 };
 use actix_web::web::{self, Data};
-use actix_web::{HttpRequest, HttpResponse};
+use actix_web::{HttpRequest, HttpResponse, ResponseError};
 use diesel::RunQueryDsl;
 use diesel::prelude::*;
 use diesel::sql_types::{Array, BigInt, Bool, Double, Integer, Nullable, Text};
@@ -95,6 +95,12 @@ fn build_region_filter(platform: &str, regions: &str) -> String {
     )) ")
 }
 
+fn serials_exist(platform: &str) -> String {
+    format!(
+        "EXISTS (SELECT 1 FROM releases r CROSS JOIN LATERAL unnest(r.serial) AS serial_number(value) WHERE r.product_id=p.id AND r.platform={platform} AND btrim(serial_number.value) <> '')"
+    )
+}
+
 #[get("/products")]
 pub async fn list(
     pool: Data<DBPool>,
@@ -102,6 +108,19 @@ pub async fn list(
     query: web::Query<Pagination>,
     req: HttpRequest,
 ) -> HttpResponse {
+    let unknown = query.unknown.unwrap_or(false);
+    if unknown {
+        let Some(claims) = crate::auth::authenticated_claims(&req) else {
+            return HttpResponse::Unauthorized().finish();
+        };
+        if let Err(error) = crate::admin::db(pool.clone(), move |conn| {
+            crate::admin::require_admin(conn, &claims)
+        })
+        .await
+        {
+            return error.error_response();
+        }
+    }
     let regions = match query.region_groups() {
         Ok(regions) => regions,
         Err(()) => return HttpResponse::BadRequest().body("Invalid region group"),
@@ -133,6 +152,7 @@ pub async fn list(
     }
 
     let mut cache_key = build_cache_key(cat, limit, offset, &text_query, ignore_digital, &sort);
+    cache_key.push_str(&format!(":unknown_{unknown}"));
     cache_key.push_str(&format!(":unreleased_{include_unreleased}"));
     cache_key.push_str(&format!(":regions_{}", regions.join(",")));
     if let Some(id) = query.franchise_id {
@@ -185,17 +205,18 @@ pub async fn list(
     );
     let visibility = visibility_filter("$11");
     let region_filter = build_region_filter("$4", "$12");
+    let serials = serials_exist("$4");
+    let unknown_filter = if unknown {
+        format!("AND NOT {serials}")
+    } else {
+        String::new()
+    };
     let sql = format!(
         r#"
         SELECT 
             p.id AS id,
             p.name AS name,
-            EXISTS (
-                SELECT 1 FROM releases r
-                CROSS JOIN LATERAL unnest(r.serial) AS serial_number(value)
-                WHERE r.product_id = p.id AND r.platform = $4
-                  AND btrim(serial_number.value) <> ''
-            ) AS has_serials,
+            {serials} AS has_serials,
             p.first_release_date AS first_release_date,
             p.total_rating,
             p.total_rating_count,
@@ -233,6 +254,7 @@ pub async fn list(
         ))
         {visibility}
         {region_filter}
+        {unknown_filter}
         {features_filter}
         ORDER BY {} {} {}, p.id ASC
         LIMIT $1 OFFSET $2
@@ -261,6 +283,11 @@ pub async fn list(
         .replace("$4", "$1");
     let visibility = visibility_filter("$9");
     let region_filter = build_region_filter("$1", "$10");
+    let unknown_filter = if unknown {
+        format!("AND NOT {}", serials_exist("$1"))
+    } else {
+        String::new()
+    };
     let count_sql = format!(
         r#"
         SELECT COUNT(DISTINCT p.id) as total
@@ -290,6 +317,7 @@ pub async fn list(
         ))
         {visibility}
         {region_filter}
+        {unknown_filter}
         {count_filter}
     "#
     );

@@ -97,6 +97,7 @@ try:
         victim_id = request('/api/profile/me', victim)['id']
         assert request('/api/profile/me', victim)['is_admin'] is False
         for token, code in [(None, 401), ('invalid', 401), (normal, 403)]:
+            request('/api/products?cat=48&limit=15&unknown=true', token, status=code)
             request('/api/admin/users', token, status=code)
             request(f'/api/admin/users/{victim_id}/promote', token, data={}, status=code)
             request(f'/api/admin/users/{victim_id}', token, method='DELETE', status=code)
@@ -143,7 +144,7 @@ try:
         from catalog_visibility_contract import exercise as exercise_visibility
         exercise_visibility(lambda path, **kw: request(path, normal, **kw), sql)
         from region_contract import exercise as exercise_regions
-        exercise_regions(lambda path, **kw: request(path, normal, **kw), sql)
+        exercise_regions(lambda path, **kw: request(path, normal, **kw), sql, lambda path, **kw: request(path, admin, **kw), lambda path, **kw: request(path, victim, **kw))
         from admin_direct_contract import exercise as exercise_direct
         exercise_direct(request, sql, admin, victim)
         from serial_requests_contract import exercise as exercise_serial_requests
