@@ -26,7 +26,7 @@ try {
   const a=await connect(admin), b=await connect(admin), user=await connect(ordinary);
   const photo=await readFile(new URL('./fixtures/serial-proof.jpg',import.meta.url));
   for (const [kind,path] of [
-    ['serial','/api/releases/1/serial-requests?serial=WS-98765'],
+    ['serial','/api/releases/1/serial-requests?serial=CUSA-98765'],
     ['alternative_name','/api/products/1/name-requests?name=Socket%20notification%20title'],
   ]) {
     const options={method:'POST',headers:{Authorization:`Bearer ${ordinary}`,'Content-Type':'image/jpeg'},body:photo};

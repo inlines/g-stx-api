@@ -19,6 +19,9 @@ pub struct ProductListItem {
     #[diesel(sql_type = Bool)]
     pub has_serials: bool,
 
+    #[diesel(sql_type = Array<Text>)]
+    pub serial: Vec<String>,
+
     #[diesel(sql_type = Bool)]
     pub digital_only: bool,
 
@@ -82,7 +85,7 @@ fn build_cache_key(
 ) -> String {
     // JSON encoding keeps delimiters in user-supplied search strings unambiguous.
     format!(
-        "cache:v8:catalog:regions:{}",
+        "cache:v9:catalog:regions:{}",
         serde_json::json!([cat, limit, offset, query, ignore_digital, sort])
     )
 }
@@ -105,6 +108,18 @@ fn build_region_filter(platform: &str, regions: &str) -> String {
         WHERE region_release.product_id=p.id AND region_release.platform={platform}
         AND (region_release.release_region=8 OR (CASE region_release.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=ANY({regions}))
     )) ")
+}
+
+fn search_filter(serial: bool, platform: &str, text: &str, regions: &str) -> String {
+    if serial {
+        format!(
+            "EXISTS(SELECT 1 FROM releases sr WHERE sr.product_id=p.id AND sr.platform={platform} AND release_serial_search_keys(sr.serial) @> ARRAY[{text}]::text[] AND (cardinality({regions}::text[])=0 OR sr.release_region=8 OR (CASE sr.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=ANY({regions})))"
+        )
+    } else {
+        format!(
+            "(p.name ILIKE {text} OR EXISTS(SELECT 1 FROM alternative_names an WHERE an.product_id=p.id AND an.name ILIKE {text}))"
+        )
+    }
 }
 
 fn serials_exist(platform: &str) -> String {
@@ -144,7 +159,21 @@ pub async fn list(
     let limit = query.limit.unwrap_or(100);
     let offset = query.offset.unwrap_or(0);
     let cat = query.cat;
-    let text_query = query.query.clone().unwrap_or_default();
+    let search_mode = query.search_mode.as_deref().unwrap_or("name");
+    if !matches!(search_mode, "name" | "serial") {
+        return HttpResponse::BadRequest().body("Invalid search mode");
+    }
+    let mut text_query = query.query.clone().unwrap_or_default();
+    if search_mode == "serial" && !text_query.trim().is_empty() {
+        text_query = match crate::serial_number::parse(&text_query) {
+            Ok(value) => value,
+            Err(()) => return HttpResponse::BadRequest().body(crate::serial_number::FORMAT_ERROR),
+        };
+    }
+    if search_mode == "serial" {
+        text_query = text_query.trim().to_owned();
+    }
+    let serial_search = search_mode == "serial" && !text_query.is_empty();
     // Unknown always excludes digital-only games, regardless of the catalogue toggle.
     let ignore_digital = unknown || query.ignore_digital.unwrap_or(false);
     let sort = query.sort.clone().unwrap_or_default();
@@ -165,7 +194,7 @@ pub async fn list(
     }
 
     let mut cache_key = build_cache_key(cat, limit, offset, &text_query, ignore_digital, &sort);
-    cache_key.push_str(&format!(":unknown_{unknown}"));
+    cache_key.push_str(&format!(":search_{search_mode}:unknown_{unknown}"));
     cache_key.push_str(&format!(":unreleased_{include_unreleased}"));
     cache_key.push_str(&format!(":regions_{}", regions.join(",")));
     if let Some(id) = query.franchise_id {
@@ -203,7 +232,11 @@ pub async fn list(
         }
     };
 
-    let db_text_query = format!("%{}%", text_query);
+    let db_text_query = if serial_search {
+        text_query.clone()
+    } else {
+        format!("%{}%", text_query)
+    };
 
     let (order_column, order_direction, nulls_order) = match sort.as_str() {
         "rating" => ("p.total_rating", "DESC", "NULLS LAST"),
@@ -224,12 +257,22 @@ pub async fn list(
     } else {
         String::new()
     };
+    let search_predicate = search_filter(serial_search, "$4", "$3", "$12");
     let sql = format!(
         r#"
         SELECT 
             p.id AS id,
             p.name AS name,
             {serials} AS has_serials,
+            ARRAY(SELECT value FROM (
+                SELECT n.value AS value,
+                    MIN(CASE WHEN cardinality($12::text[])=0 OR r.release_region=8 OR
+                      (CASE r.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=ANY($12)
+                      THEN 0 ELSE 1 END) AS priority
+                FROM releases r CROSS JOIN LATERAL unnest(format_release_serials(r.serial)) n(value)
+                WHERE r.product_id=p.id AND r.platform=$4 AND btrim(n.value)<>''
+                GROUP BY n.value
+            ) serial_values ORDER BY priority,value) AS serial,
             EXISTS(SELECT 1 FROM product_platforms pp WHERE pp.product_id=p.id AND pp.platform_id=$4 AND pp.digital_only) AS digital_only,
             p.first_release_date AS first_release_date,
             p.total_rating,
@@ -250,13 +293,7 @@ pub async fn list(
                 AND pp.platform_id = $4
                 AND ($5 = false OR pp.digital_only = false)
         )
-        AND (
-            p.name ILIKE $3 
-            OR EXISTS (
-                SELECT 1 FROM alternative_names an
-                WHERE an.product_id = p.id AND an.name ILIKE $3
-            )
-        )
+        AND {search_predicate}
         AND ($6::integer IS NULL OR EXISTS (
             SELECT 1 FROM game_franschises gf
             WHERE gf.product_id = p.id AND gf.franschise_id = $6
@@ -312,6 +349,7 @@ pub async fn list(
             }
         })
         .join(", ");
+    let search_predicate = search_filter(serial_search, "$1", "$2", "$10");
     let count_sql = format!(
         r#"
         SELECT COUNT(DISTINCT p.id) FILTER (WHERE true {region_filter}) as total, {regional_columns}
@@ -323,13 +361,7 @@ pub async fn list(
                 AND pp.platform_id = $1
                 AND ($3 = false OR pp.digital_only = false)
         )
-        AND (
-            p.name ILIKE $2
-            OR EXISTS (
-                SELECT 1 FROM alternative_names an
-                WHERE an.product_id = p.id AND an.name ILIKE $2
-            )
-        )
+        AND {search_predicate}
         AND ($4::integer IS NULL OR EXISTS (
             SELECT 1 FROM game_franschises gf
             WHERE gf.product_id = p.id AND gf.franschise_id = $4

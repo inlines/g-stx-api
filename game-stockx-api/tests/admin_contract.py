@@ -145,6 +145,8 @@ try:
         exercise_visibility(lambda path, **kw: request(path, normal, **kw), sql)
         from region_contract import exercise as exercise_regions
         exercise_regions(lambda path, **kw: request(path, normal, **kw), sql, lambda path, **kw: request(path, admin, **kw), lambda path, **kw: request(path, victim, **kw))
+        from serial_search_contract import exercise as exercise_serial_search
+        exercise_serial_search(lambda path, **kw: request(path, normal, **kw), sql)
         from admin_direct_contract import exercise as exercise_direct
         exercise_direct(request, sql, admin, victim)
         from serial_requests_contract import exercise as exercise_serial_requests

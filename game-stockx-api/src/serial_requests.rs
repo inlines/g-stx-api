@@ -16,19 +16,10 @@ const PHOTO_LIMIT: usize = 768 * 1024;
 const PLATFORMS: [i32; 5] = [8, 9, 48, 167, 38]; // PS2, PS3, PS4, PS5, PSP (IGDB).
 
 fn normalize_serial(value: &str) -> Result<String, AdminError> {
-    let value = value.trim().to_ascii_uppercase();
-    if !(3..=64).contains(&value.len())
-        || !value
-            .bytes()
-            .all(|c| c.is_ascii_alphanumeric() || b" -_./".contains(&c))
-        || !value.bytes().any(|c| c.is_ascii_alphanumeric())
-    {
-        return Err(AdminError::Invalid(
-            "Укажите серийник: 3–64 символа, латинские буквы, цифры, пробелы или - _ . /",
-        ));
-    }
-    Ok(value)
+    crate::serial_number::parse(value)
+        .map_err(|_| AdminError::Invalid(crate::serial_number::FORMAT_ERROR))
 }
+
 fn normalize_name(value: &str) -> Result<String, AdminError> {
     let value = value.split_whitespace().collect::<Vec<_>>().join(" ");
     if !(1..=200).contains(&value.chars().count()) || value.chars().any(char::is_control) {
@@ -192,9 +183,12 @@ async fn submit(
         conn.transaction(|conn| {
             lock_submitter(conn, &user)?;
             let existing = release(conn, *id)?;
-            if existing.serial.into_iter().flatten().flatten().any(|s| s.trim().eq_ignore_ascii_case(&serial)) {
+            if existing.serial.into_iter().flatten().flatten().any(|s| crate::serial_number::canonical(&s) == serial) {
                 return Err(AdminError::Conflict("Этот серийник уже указан у релиза"));
             }
+            let duplicates = diesel::sql_query("SELECT count(*) AS total FROM release_serial_requests WHERE release_id=$1 AND status='pending' AND kind='serial' AND normalize_release_serial(serial)=$2")
+                .bind::<Integer,_>(*id).bind::<Text,_>(&serial).get_result::<Count>(conn)?.total;
+            if duplicates > 0 { return Err(AdminError::Conflict("Заявка с этим серийником уже ожидает рассмотрения")); }
             let added = diesel::sql_query("INSERT INTO release_serial_requests(release_id,submitter_id,serial,photo) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING id")
                 .bind::<Integer,_>(*id).bind::<Integer,_>(user.uid).bind::<Text,_>(&serial).bind::<Binary,_>(image)
                 .get_result::<Id>(conn).optional()?.ok_or(AdminError::Conflict("Заявка с этим серийником уже ожидает рассмотрения"))?;
@@ -357,7 +351,8 @@ async fn accept(
         let item = pending(conn, *id)?;
         let requested = requested.map(|value| normalize_value(&item.kind, &value)).transpose()?;
         if item.status == "accepted" {
-            let accepted = item.accepted_serial.as_deref().unwrap_or(&item.serial);
+            let accepted_raw = item.accepted_serial.as_deref().unwrap_or(&item.serial);
+            let accepted = if item.kind == "serial" { crate::serial_number::canonical(accepted_raw) } else { accepted_raw.to_owned() };
             if requested.as_deref().is_some_and(|value| value != accepted) {
                 return Err(AdminError::Conflict("Заявка уже принята с другим серийником. Обновите список"));
             }
@@ -375,7 +370,7 @@ async fn accept(
         } else {
             let release_id = item.release_id.ok_or(AdminError::Internal)?;
             release(conn, release_id)?;
-            diesel::sql_query("UPDATE releases SET serial = CASE WHEN EXISTS(SELECT 1 FROM unnest(serial) s WHERE upper(btrim(s))=$1) THEN serial ELSE array_append(COALESCE(serial,ARRAY[]::text[]),$1) END WHERE id=$2")
+            diesel::sql_query("UPDATE releases SET serial = CASE WHEN EXISTS(SELECT 1 FROM unnest(serial) s WHERE normalize_release_serial(s)=$1) THEN serial ELSE array_append(COALESCE(serial,ARRAY[]::text[]),$1) END WHERE id=$2")
                 .bind::<Text,_>(&serial).bind::<Integer,_>(release_id).execute(conn)?;
             diesel::sql_query("UPDATE catalog_cache_revision SET revision=revision+1 WHERE id=1").execute(conn)?;
         }
@@ -413,7 +408,7 @@ async fn add_direct(
             diesel::sql_query("UPDATE products SET cache_revision=cache_revision+1 WHERE id=$1").bind::<Integer,_>(id).execute(conn)?;
         } else {
             let existing = release(conn, id)?;
-            if existing.serial.into_iter().flatten().flatten().any(|s| s.trim().eq_ignore_ascii_case(&value)) {
+            if existing.serial.into_iter().flatten().flatten().any(|s| crate::serial_number::canonical(&s) == value) {
                 return Err(AdminError::Conflict("Этот серийник уже указан у релиза"));
             }
             diesel::sql_query("UPDATE releases SET serial=array_append(COALESCE(serial,ARRAY[]::text[]),$1) WHERE id=$2")

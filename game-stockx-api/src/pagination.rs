@@ -7,6 +7,7 @@ pub struct Pagination {
     pub unknown: Option<bool>,
     pub regions: Option<String>,
     pub query: Option<String>,
+    pub search_mode: Option<String>,
     pub include_unreleased: Option<bool>,
     pub ignore_digital: Option<bool>,
     pub local_multiplayer: Option<bool>,
