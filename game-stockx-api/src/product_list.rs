@@ -85,7 +85,7 @@ fn build_cache_key(
 ) -> String {
     // JSON encoding keeps delimiters in user-supplied search strings unambiguous.
     format!(
-        "cache:v9:catalog:regions:{}",
+        "cache:v10:catalog:regions:{}",
         serde_json::json!([cat, limit, offset, query, ignore_digital, sort])
     )
 }
@@ -264,15 +264,13 @@ pub async fn list(
             p.id AS id,
             p.name AS name,
             {serials} AS has_serials,
-            ARRAY(SELECT value FROM (
-                SELECT n.value AS value,
-                    MIN(CASE WHEN cardinality($12::text[])=0 OR r.release_region=8 OR
-                      (CASE r.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=ANY($12)
-                      THEN 0 ELSE 1 END) AS priority
+            ARRAY(
+                SELECT DISTINCT n.value
                 FROM releases r CROSS JOIN LATERAL unnest(format_release_serials(r.serial)) n(value)
                 WHERE r.product_id=p.id AND r.platform=$4 AND btrim(n.value)<>''
-                GROUP BY n.value
-            ) serial_values ORDER BY priority,value) AS serial,
+                  AND (CASE r.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=ANY($12::text[])
+                ORDER BY n.value
+            ) AS serial,
             EXISTS(SELECT 1 FROM product_platforms pp WHERE pp.product_id=p.id AND pp.platform_id=$4 AND pp.digital_only) AS digital_only,
             p.first_release_date AS first_release_date,
             p.total_rating,

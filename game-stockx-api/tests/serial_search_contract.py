@@ -30,7 +30,12 @@ def exercise(request, sql):
         assert ids('CUSA-10004',region)==[701]
     for invalid in ['CUSA-1000','CUSA-100010','%','CUSA-10001,CUSA-10002']:
         search(invalid,status=400)
-    assert search('CUSA-10002','america')['items'][0]['serial']==['CUSA-10002','CUSA-10001','CUSA-10001/H/ITA']
+    assert search('CUSA-10002','america')['items'][0]['serial']==['CUSA-10002']
+    assert search('CUSA-10001')['items'][0]['serial']==[]
+    assert search('CUSA-10001','europe')['items'][0]['serial']==['CUSA-10001','CUSA-10001/H/ITA']
+    assert search('CUSA-10001','europe,america')['items'][0]['serial']==['CUSA-10001','CUSA-10001/H/ITA','CUSA-10002']
+    assert search('CUSA-10004','europe')['items'][0]['serial']==[]
+    assert search('CUSA-10004','other')['items'][0]['serial']==['CUSA-10004']
     assert search('PPSA-10003','europe',167)['items'][0]['serial']==['PPSA-10003']
     assert request('/api/products?cat=48&limit=15&query=Serial%20fixture')['total_count']==1
     assert request('/api/products?cat=48&limit=15&search_mode=serial')['total_count']>=2
