@@ -11,7 +11,7 @@ async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 actix-rt = "2.5.0"
 actix-web-actors = "4"
-diesel = { version = "2.1", features = ["postgres", "r2d2", "chrono", "uuid"] }
+diesel = { version = "2.1", features = ["postgres", "r2d2", "chrono", "uuid", "serde_json"] }
 r2d2 = "0.8.8"
 r2d2-diesel = "1.0.0"
 serde = { version = "1.0", features = ["derive"] }

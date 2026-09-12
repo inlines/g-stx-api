@@ -154,6 +154,7 @@ async fn main() -> io::Result<()> {
                     .service(collectors::get_collector_wts)
                     .service(platforms::get_platforms)
                     .service(chat::get_my_messages)
+                    .service(chat::get_unread)
                     .service(chat::get_my_dialogs),
             )
             // Регистрация маршрута WebSocket для чата

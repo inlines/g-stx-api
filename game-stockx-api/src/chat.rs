@@ -10,19 +10,31 @@ use chrono::{DateTime, Utc};
 use diesel::PgConnection;
 use diesel::prelude::*;
 use diesel::r2d2::ConnectionManager;
-use diesel::sql_types::{Text, Timestamptz};
+use diesel::sql_types::{Array, BigInt, Bool, Integer, Jsonb, Nullable, Text, Timestamptz};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
-#[derive(Message, Serialize, Deserialize, Debug, Clone)]
+#[derive(Message, Serialize, Deserialize, Debug, Clone, QueryableByName)]
 #[rtype(result = "()")]
 pub struct ClientMessage {
+    #[diesel(sql_type = Integer)]
+    pub id: i32,
+    #[diesel(sql_type = Text)]
     pub sender: String,
+    #[diesel(sql_type = Text)]
     pub recipient: String,
+    #[diesel(sql_type = Text)]
     pub body: String,
-    pub created_at: String,
+    #[diesel(sql_type = Timestamptz)]
+    pub created_at: DateTime<Utc>,
+    #[diesel(sql_type = Bool)]
+    pub read: bool,
+    #[diesel(sql_type = Nullable<Timestamptz>)]
+    pub read_at: Option<DateTime<Utc>>,
+    #[diesel(sql_type = Nullable<Text>)]
+    pub client_id: Option<String>,
 }
 
 #[derive(Message, Serialize, Clone)]
@@ -30,6 +42,26 @@ pub struct ClientMessage {
 #[serde(untagged)]
 pub enum ServerEvent {
     Message(ClientMessage),
+    Unread {
+        r#type: &'static str,
+        revision: i64,
+        unread: serde_json::Value,
+    },
+    Read {
+        r#type: &'static str,
+        reader: String,
+        ids: Vec<i32>,
+        read_at: DateTime<Utc>,
+    },
+    Typing {
+        r#type: &'static str,
+        sender: String,
+        typing: bool,
+    },
+    SendFailed {
+        r#type: &'static str,
+        client_id: Option<String>,
+    },
     NewRequest {
         r#type: &'static str,
         request_id: i32,
@@ -62,7 +94,17 @@ pub enum ChatCommand {
         login: String,
         addr: Recipient<ServerEvent>,
     },
+    ReadMessages {
+        reader: String,
+        ids: Vec<i32>,
+    },
+    Typing {
+        sender: String,
+        recipient: String,
+        typing: bool,
+    },
     SendMessage {
+        client_id: Option<String>,
         sender: String,
         recipient: String,
         body: String,
@@ -75,6 +117,14 @@ pub struct ChatServer {
 }
 
 impl ChatServer {
+    fn deliver(&self, login: &str, event: ServerEvent) {
+        if let Some(sessions) = self.sessions.get(login) {
+            for session in sessions {
+                session.do_send(event.clone());
+            }
+        }
+    }
+
     fn broadcast_presence(&self) {
         let mut online: Vec<String> = self.sessions.keys().cloned().collect();
         online.sort();
@@ -156,6 +206,34 @@ impl Handler<ChatCommand> for ChatServer {
                     }
                     self.broadcast_presence();
                 }
+                let pool = self.db_pool.clone();
+                let logins: Vec<String> = self.sessions.keys().cloned().collect();
+                ctx.spawn(
+                    async move {
+                        spawn_blocking(move || {
+                            let mut conn = pool.get().ok()?;
+                            Some(
+                                logins
+                                    .into_iter()
+                                    .filter_map(|login| {
+                                        unread_snapshot(&mut conn, &login)
+                                            .ok()
+                                            .map(|snapshot| (login, snapshot))
+                                    })
+                                    .collect::<Vec<_>>(),
+                            )
+                        })
+                        .await
+                    }
+                    .into_actor(self)
+                    .map(|result, server, _| {
+                        if let Ok(Some(snapshots)) = result {
+                            for (login, snapshot) in snapshots {
+                                server.deliver(&login, snapshot.event());
+                            }
+                        }
+                    }),
+                );
             }
             ChatCommand::Connect { login, addr } => {
                 println!("ConnectedWS: {}", login.clone());
@@ -180,57 +258,87 @@ impl Handler<ChatCommand> for ChatServer {
                 }
                 println!("DisconnectedWS: {}", login);
             }
+            ChatCommand::Typing {
+                sender,
+                recipient,
+                typing,
+            } => {
+                if sender != recipient {
+                    self.deliver(
+                        &recipient,
+                        ServerEvent::Typing {
+                            r#type: "typing",
+                            sender,
+                            typing,
+                        },
+                    );
+                }
+            }
+            ChatCommand::ReadMessages { reader, ids } => {
+                if ids.is_empty() || ids.len() > 100 {
+                    return;
+                }
+                let pool = self.db_pool.clone();
+                ctx.spawn(async move {
+                    spawn_blocking(move || -> Result<_,diesel::result::Error> {
+                        let mut conn=pool.get().map_err(|_|diesel::result::Error::NotFound)?;
+                        conn.transaction(|conn| {
+                            lock_receipts(conn,&reader)?;
+                            let rows=diesel::sql_query("UPDATE messages SET read=true,read_at=now() WHERE recipient_login=$1 AND id=ANY($2) AND NOT read RETURNING id,sender_login AS sender,recipient_login AS recipient,body,created_at,read,read_at,client_id")
+                                .bind::<Text,_>(&reader).bind::<Array<Integer>,_>(ids).load::<ClientMessage>(conn)?;
+                            if !rows.is_empty() { bump_receipts(conn,&reader)?; }
+                            let snapshot=unread_snapshot(conn,&reader)?;
+                            Ok((reader,rows,snapshot))
+                        })
+                    }).await
+                }.into_actor(self).map(|result,server,_| {
+                    if let Ok(Ok((reader,rows,snapshot)))=result {
+                        let mut groups: HashMap<String,Vec<i32>>=HashMap::new();
+                        let at=rows.first().and_then(|row|row.read_at).unwrap_or_else(Utc::now);
+                        for row in rows { groups.entry(row.sender).or_default().push(row.id); }
+                        for (sender,ids) in groups {
+                            let event=ServerEvent::Read { r#type:"read",reader:reader.clone(),ids,read_at:at };
+                            server.deliver(&sender,event.clone()); server.deliver(&reader,event);
+                        }
+                        server.deliver(&reader,snapshot.event());
+                    } else { log::warn!("Could not save chat read receipt"); }
+                }));
+            }
             ChatCommand::SendMessage {
                 sender,
                 recipient,
                 body,
+                client_id,
             } => {
                 let pool = self.db_pool.clone();
-
-                let message = ClientMessage {
-                    sender: sender.clone(),
-                    recipient: recipient.clone(),
-                    body: body.clone(),
-                    created_at: Utc::now().to_rfc3339(),
-                };
-
-                // Отправка сообщения пользователю, если он онлайн
-                if let Some(sessions) = self.sessions.get(&recipient) {
-                    // Отправляем каждому активному соединению
-                    for addr in sessions {
-                        addr.do_send(ServerEvent::Message(message.clone()));
+                let failed_sender = sender.clone();
+                let failed_id = client_id.clone();
+                ctx.spawn(async move {
+                    spawn_blocking(move || -> Result<_,diesel::result::Error> {
+                        let mut conn=pool.get().map_err(|_|diesel::result::Error::NotFound)?;
+                        conn.transaction(|conn| {
+                            lock_receipts(conn,&recipient)?;
+                            let added=diesel::sql_query("INSERT INTO messages(sender_login,recipient_login,body,client_id) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING RETURNING id,sender_login AS sender,recipient_login AS recipient,body,created_at,read,read_at,client_id")
+                                .bind::<Text,_>(&sender).bind::<Text,_>(&recipient).bind::<Text,_>(&body).bind::<Nullable<Text>,_>(&client_id).get_result::<ClientMessage>(conn).optional()?;
+                            let inserted=added.is_some();
+                            let message=match added {Some(message)=>message,None=>diesel::sql_query("SELECT id,sender_login AS sender,recipient_login AS recipient,body,created_at,read,read_at,client_id FROM messages WHERE sender_login=$1 AND client_id=$2 AND recipient_login=$3 AND body=$4")
+                                .bind::<Text,_>(&sender).bind::<Nullable<Text>,_>(&client_id).bind::<Text,_>(&recipient).bind::<Text,_>(&body).get_result::<ClientMessage>(conn)?};
+                            if inserted { bump_receipts(conn,&recipient)?; }
+                            let snapshot=unread_snapshot(conn,&recipient)?;
+                            Ok((message,snapshot,inserted))
+                        })
+                    }).await
+                }.into_actor(self).map(move |result,server,_| match result {
+                    Ok(Ok((message,snapshot,inserted)))=> {
+                        if inserted { CHAT_MESSAGES_SENT.inc(); }
+                        let recipient=message.recipient.clone(); let sender=message.sender.clone();
+                        server.deliver(&sender,ServerEvent::Message(message.clone()));
+                        if sender!=recipient { server.deliver(&recipient,ServerEvent::Message(message)); }
+                        server.deliver(&recipient,ServerEvent::Typing {r#type:"typing",sender,typing:false});
+                        server.deliver(&recipient,snapshot.event());
                     }
-                }
-
-                spawn_blocking(move || {
-                    // Сохранение сообщения в базу данных
-                    let query = r#"
-                        INSERT INTO messages (sender_login, recipient_login, body)
-                        VALUES ($1, $2, $3)
-                    "#;
-
-                    // Выполняем запрос с привязкой параметров
-                    let mut conn = match pool.get() {
-                        Ok(conn) => conn,
-                        Err(error) => {
-                            CHAT_PERSISTENCE_ERRORS.inc();
-                            log::warn!("Could not acquire connection for chat message: {error}");
-                            return;
-                        }
-                    };
-                    match diesel::sql_query(query)
-                        .bind::<diesel::sql_types::Text, _>(sender) // Sender
-                        .bind::<diesel::sql_types::Text, _>(recipient) // Recipient
-                        .bind::<diesel::sql_types::Text, _>(body) // Body
-                        .execute(&mut conn)
-                    {
-                        Ok(inserted) => CHAT_MESSAGES_SENT.inc_by(inserted as f64),
-                        Err(error) => {
-                            CHAT_PERSISTENCE_ERRORS.inc();
-                            log::warn!("Could not persist chat message: {error}");
-                        }
-                    }
-                });
+                    _=> {CHAT_PERSISTENCE_ERRORS.inc();server.deliver(&failed_sender,ServerEvent::SendFailed{r#type:"send_failed",client_id:failed_id});log::warn!("Could not persist chat message");}
+                }));
             }
         }
     }
@@ -243,6 +351,7 @@ pub struct ChatSession {
     heartbeat: std::time::Instant,
     authenticated: bool,
     user_id: i32,
+    last_typing: Option<std::time::Instant>,
 }
 
 #[derive(Deserialize)]
@@ -253,6 +362,7 @@ struct Authentication {
 
 #[derive(Deserialize)]
 struct OutgoingMessage {
+    client_id: Option<String>,
     recipient: String,
     body: String,
 }
@@ -339,12 +449,77 @@ impl StreamHandler<Result<ws::Message, ProtocolError>> for ChatSession {
                     self.reject(ctx);
                     return;
                 }
-                if let Ok(parsed) = serde_json::from_str::<OutgoingMessage>(&text) {
-                    self.addr.do_send(ChatCommand::SendMessage {
-                        sender: self.login.clone(),
-                        recipient: parsed.recipient,
-                        body: parsed.body,
-                    });
+                let value = serde_json::from_str::<serde_json::Value>(&text).ok();
+                match value
+                    .as_ref()
+                    .and_then(|v| v.get("type"))
+                    .and_then(|v| v.as_str())
+                {
+                    Some("read") => {
+                        if let Some(ids) = value
+                            .as_ref()
+                            .and_then(|v| v.get("ids"))
+                            .and_then(|v| serde_json::from_value::<Vec<i32>>(v.clone()).ok())
+                            .filter(|ids| ids.len() <= 100)
+                        {
+                            self.addr.do_send(ChatCommand::ReadMessages {
+                                reader: self.login.clone(),
+                                ids,
+                            });
+                        }
+                    }
+                    Some("typing") => {
+                        match (
+                            value
+                                .as_ref()
+                                .and_then(|v| v.get("recipient"))
+                                .and_then(|v| v.as_str()),
+                            value
+                                .as_ref()
+                                .and_then(|v| v.get("typing"))
+                                .and_then(|v| v.as_bool()),
+                        ) {
+                            (Some(recipient), Some(typing))
+                                if recipient.len() <= 200
+                                    && (!typing
+                                        || self.last_typing.is_none_or(|last| {
+                                            last.elapsed() >= std::time::Duration::from_millis(800)
+                                        })) =>
+                            {
+                                if typing {
+                                    self.last_typing = Some(std::time::Instant::now());
+                                }
+                                self.addr.do_send(ChatCommand::Typing {
+                                    sender: self.login.clone(),
+                                    recipient: recipient.into(),
+                                    typing,
+                                });
+                            }
+                            _ => {}
+                        }
+                    }
+                    None | Some("message") => {
+                        if let Ok(parsed) = serde_json::from_str::<OutgoingMessage>(&text) {
+                            if !parsed.body.trim().is_empty()
+                                && parsed.body.len() <= 16000
+                                && parsed.recipient.len() <= 200
+                                && parsed
+                                    .client_id
+                                    .as_ref()
+                                    .is_none_or(|id| !id.is_empty() && id.len() <= 64)
+                            {
+                                self.addr.do_send(ChatCommand::SendMessage {
+                                    sender: self.login.clone(),
+                                    recipient: parsed.recipient,
+                                    body: parsed.body,
+                                    client_id: parsed.client_id,
+                                });
+                            } else {
+                                ctx.text(serde_json::json!({"type":"send_failed","client_id":parsed.client_id}).to_string());
+                            }
+                        }
+                    }
+                    _ => {}
                 }
             }
             Ok(ws::Message::Ping(msg)) => {
@@ -402,20 +577,9 @@ pub async fn chat_ws(
         heartbeat: std::time::Instant::now(),
         authenticated: false,
         user_id: 0,
+        last_typing: None,
     };
     ws::start(session, &req, stream)
-}
-
-#[derive(Debug, Serialize, QueryableByName)]
-pub struct MessageDto {
-    #[diesel(sql_type = Text)]
-    pub sender: String,
-    #[diesel(sql_type = Text)]
-    pub recipient: String,
-    #[diesel(sql_type = Text)]
-    pub body: String,
-    #[diesel(sql_type = Timestamptz)]
-    pub created_at: chrono::NaiveDateTime,
 }
 
 #[derive(Deserialize)]
@@ -440,17 +604,17 @@ async fn get_my_messages(
     let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
 
     let query = r#"
-       SELECT sender_login as sender, recipient_login as recipient, body, created_at
+       SELECT id, sender_login as sender, recipient_login as recipient, body, created_at, read, read_at, client_id
         FROM messages
         WHERE (sender_login = $1 AND recipient_login = $2)
            OR (sender_login = $2 AND recipient_login = $1)
-        ORDER BY created_at ASC
+        ORDER BY id ASC
     "#;
 
     let messages = match diesel::sql_query(query)
         .bind::<Text, _>(&my_login)
         .bind::<Text, _>(&other_login)
-        .load::<MessageDto>(conn)
+        .load::<ClientMessage>(conn)
     {
         Ok(results) => results,
         Err(err) => {
@@ -459,7 +623,9 @@ async fn get_my_messages(
         }
     };
 
-    HttpResponse::Ok().json(messages)
+    HttpResponse::Ok()
+        .insert_header(("Cache-Control", "no-store"))
+        .json(messages)
 }
 
 #[derive(Debug, Serialize, QueryableByName)]
@@ -506,7 +672,9 @@ async fn get_my_dialogs(pool: web::Data<DBPool>, req: HttpRequest) -> HttpRespon
         }
     };
 
-    HttpResponse::Ok().json(dialogs)
+    HttpResponse::Ok()
+        .insert_header(("Cache-Control", "no-store"))
+        .json(dialogs)
 }
 
 #[cfg(test)]
@@ -583,14 +751,69 @@ mod presence_tests {
     #[actix_rt::test]
     async fn messages_keep_the_existing_wire_format() {
         let message = ClientMessage {
+            id: 1,
+            read: false,
+            read_at: None,
+            client_id: None,
             sender: "alice".into(),
             recipient: "bob".into(),
             body: "Hi".into(),
-            created_at: "now".into(),
+            created_at: Utc::now(),
         };
         assert_eq!(
             serde_json::to_value(ServerEvent::Message(message.clone())).unwrap(),
             serde_json::to_value(message).unwrap()
         );
     }
+}
+
+#[derive(Serialize, QueryableByName)]
+struct UnreadSnapshot {
+    #[diesel(sql_type=BigInt)]
+    revision: i64,
+    #[diesel(sql_type=Jsonb)]
+    unread: serde_json::Value,
+}
+impl UnreadSnapshot {
+    fn event(self) -> ServerEvent {
+        ServerEvent::Unread {
+            r#type: "unread",
+            revision: self.revision,
+            unread: self.unread,
+        }
+    }
+}
+fn lock_receipts(conn: &mut PgConnection, login: &str) -> QueryResult<()> {
+    diesel::sql_query(
+        "INSERT INTO chat_receipt_state(user_login) VALUES($1) ON CONFLICT DO NOTHING",
+    )
+    .bind::<Text, _>(login)
+    .execute(conn)?;
+    diesel::sql_query("SELECT user_login FROM chat_receipt_state WHERE user_login=$1 FOR UPDATE")
+        .bind::<Text, _>(login)
+        .execute(conn)?;
+    Ok(())
+}
+fn bump_receipts(conn: &mut PgConnection, login: &str) -> QueryResult<()> {
+    diesel::sql_query("UPDATE chat_receipt_state SET revision=revision+1 WHERE user_login=$1")
+        .bind::<Text, _>(login)
+        .execute(conn)?;
+    Ok(())
+}
+fn unread_snapshot(conn: &mut PgConnection, login: &str) -> QueryResult<UnreadSnapshot> {
+    diesel::sql_query("SELECT COALESCE((SELECT revision FROM chat_receipt_state WHERE user_login=$1),0)::bigint AS revision,COALESCE((SELECT jsonb_object_agg(sender_login,total) FROM (SELECT sender_login,count(*) AS total FROM messages WHERE recipient_login=$1 AND NOT read GROUP BY sender_login) counts),'{}'::jsonb) AS unread")
+        .bind::<Text,_>(login).get_result(conn)
+}
+#[get("/chat/unread")]
+async fn get_unread(
+    pool: web::Data<DBPool>,
+    req: HttpRequest,
+) -> Result<HttpResponse, crate::admin::AdminError> {
+    let user =
+        crate::auth::authenticated_claims(&req).ok_or(crate::admin::AdminError::Unauthorized)?;
+    let snapshot =
+        crate::admin::db(pool, move |conn| Ok(unread_snapshot(conn, &user.sub)?)).await?;
+    Ok(HttpResponse::Ok()
+        .insert_header(("Cache-Control", "no-store"))
+        .json(snapshot))
 }

@@ -156,6 +156,8 @@ try:
         notification_test = subprocess.run(['node', str(ROOT / 'tests/request_notifications.mjs')], input=json.dumps({'base': base, 'admin': admin, 'ordinary': victim}), text=True, capture_output=True)
         assert notification_test.returncode == 0, notification_test.stdout + notification_test.stderr
         print(notification_test.stdout.strip())
+        print(run(['node', str(ROOT / 'tests/chat_receipts.mjs')], input=json.dumps({'base':base,'alice':admin,'bob':victim,'carol':normal})))
+        sql("DELETE FROM messages WHERE client_id LIKE 'receipt-test-%'; UPDATE chat_receipt_state SET revision=revision+1;")
         # An unexpected dependent relation must roll the entire deletion back.
         sql(f'CREATE TABLE deletion_blocker(user_id INTEGER REFERENCES users(id)); INSERT INTO deletion_blocker VALUES({victim_id});')
         request(f'/api/admin/users/{victim_id}', admin, method='DELETE', status=500)

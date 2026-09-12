@@ -35,7 +35,8 @@ try {
     const event = await Promise.race([session.closed, new Promise((_,reject) => setTimeout(() => reject(new Error('Session was not revoked')), 3000))]);
     assert.equal(event.code, 1008);
   }
-  await until(() => watcher.messages.at(-1)?.online?.every(login => login !== 'victim'));
+  await until(() => watcher.messages.filter(m => m.type === 'presence').at(-1)?.online?.every(login => login !== 'victim'));
+  await until(() => watcher.messages.some(m => m.type === 'unread' && !m.unread.victim));
   const retry = await connect(victim);
   assert.equal((await retry.closed).code, 1008);
   console.log('PASS: deleting an account disconnects all its chat tabs, updates presence and rejects reconnection');
