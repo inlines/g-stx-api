@@ -88,7 +88,7 @@ fn build_cache_key(
 ) -> String {
     // JSON encoding keeps delimiters in user-supplied search strings unambiguous.
     format!(
-        "cache:v13:catalog:regions:{}",
+        "cache:v14:catalog:regions:{}",
         serde_json::json!([cat, limit, offset, query, ignore_digital, sort])
     )
 }
@@ -96,12 +96,15 @@ fn build_cache_key(
 // Shared by the list and count queries. Digital filtering stays on
 // product_platforms.digital_only. A dated release or a serial must belong to
 // the selected platform; the global game date cannot prove a platform release.
+// IGDB release_date_statuses id=5 is Cancelled; planned dates/serials there
+// must not qualify as release evidence. NULL status remains supported for legacy data.
 fn visibility_filter(unreleased: &str, platform: &str) -> String {
     format!(
         r#"
         AND ({unreleased} OR EXISTS (
             SELECT 1 FROM releases available
             WHERE available.product_id=p.id AND available.platform={platform}
+              AND available.release_status IS DISTINCT FROM 5
               AND (available.release_date IS NOT NULL OR EXISTS (
                   SELECT 1 FROM unnest(available.serial) serial(value)
                   WHERE btrim(serial.value)<>''
