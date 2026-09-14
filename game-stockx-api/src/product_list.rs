@@ -88,7 +88,7 @@ fn build_cache_key(
 ) -> String {
     // JSON encoding keeps delimiters in user-supplied search strings unambiguous.
     format!(
-        "cache:v11:catalog:regions:{}",
+        "cache:v12:catalog:regions:{}",
         serde_json::json!([cat, limit, offset, query, ignore_digital, sort])
     )
 }
@@ -261,6 +261,7 @@ pub async fn list(
         String::new()
     };
     let search_predicate = search_filter(serial_search, "$4", "$3", "$12");
+    let selected_serials = crate::catalog_serials::selected_sql("$4", "$12");
     let dates = crate::release_dates::map_sql("p", "$4");
     let selected_date = crate::release_dates::selected_sql("release_dates.dates", "$12");
     let sql = format!(
@@ -269,13 +270,7 @@ pub async fn list(
             p.id AS id,
             p.name AS name,
             {serials} AS has_serials,
-            ARRAY(
-                SELECT DISTINCT n.value
-                FROM releases r CROSS JOIN LATERAL unnest(format_release_serials(r.serial)) n(value)
-                WHERE r.product_id=p.id AND r.platform=$4 AND btrim(n.value)<>''
-                  AND (CASE r.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=ANY($12::text[])
-                ORDER BY n.value
-            ) AS serial,
+            {selected_serials} AS serial,
             EXISTS(SELECT 1 FROM product_platforms pp WHERE pp.product_id=p.id AND pp.platform_id=$4 AND pp.digital_only) AS digital_only,
             p.first_release_date AS first_release_date,
             {selected_date} AS release_date,
