@@ -109,6 +109,7 @@ async fn get_collection(
             uhr.release_id,
             uhr.price,
             r.release_date,
+            __RELEASE_DATES__ AS release_dates,
             r.platform AS platform_id,
             r.release_region AS region_id,
             (r.digital_only OR EXISTS(SELECT 1 FROM product_platforms pp WHERE pp.product_id=r.product_id AND pp.platform_id=r.platform AND pp.digital_only)) AS digital_only,
@@ -130,6 +131,10 @@ async fn get_collection(
         LIMIT $3 OFFSET $4
     "#;
 
+    let query = query.replace(
+        "__RELEASE_DATES__",
+        &crate::release_dates::map_sql("prod", "r.platform"),
+    );
     let result = diesel::sql_query(query)
         .bind::<Text, _>(&user_login)
         .bind::<diesel::sql_types::BigInt, _>(cat)
@@ -190,6 +195,7 @@ async fn get_collection_by_login(
         SELECT 
             uhr.release_id,
             r.release_date,
+            __RELEASE_DATES__ AS release_dates,
             r.platform AS platform_id,
             r.release_region AS region_id,
             (r.digital_only OR EXISTS(SELECT 1 FROM product_platforms pp WHERE pp.product_id=r.product_id AND pp.platform_id=r.platform AND pp.digital_only)) AS digital_only,
@@ -212,6 +218,10 @@ async fn get_collection_by_login(
         LIMIT $2 OFFSET $3
     "#;
 
+    let query_text = query_text.replace(
+        "__RELEASE_DATES__",
+        &crate::release_dates::map_sql("prod", "r.platform"),
+    );
     let result = diesel::sql_query(query_text)
         .bind::<Text, _>(&login)
         .bind::<diesel::sql_types::BigInt, _>(limit)
@@ -250,6 +260,7 @@ async fn get_wishlist(
         SELECT 
             uhw.release_id,
             r.release_date,
+            __RELEASE_DATES__ AS release_dates,
             r.platform AS platform_id,
             r.release_region AS region_id,
             (r.digital_only OR EXISTS(SELECT 1 FROM product_platforms pp WHERE pp.product_id=r.product_id AND pp.platform_id=r.platform AND pp.digital_only)) AS digital_only,
@@ -272,6 +283,10 @@ async fn get_wishlist(
         LIMIT $3 OFFSET $4
     "#;
 
+    let query = query.replace(
+        "__RELEASE_DATES__",
+        &crate::release_dates::map_sql("prod", "r.platform"),
+    );
     let result = diesel::sql_query(query)
         .bind::<Text, _>(&user_login)
         .bind::<diesel::sql_types::BigInt, _>(cat)

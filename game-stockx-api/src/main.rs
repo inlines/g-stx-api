@@ -33,6 +33,7 @@ mod product_list;
 mod profile;
 mod redis;
 mod register;
+mod release_dates;
 mod serial_number;
 mod serial_requests;
 mod simple_rate_limiter;

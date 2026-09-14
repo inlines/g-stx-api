@@ -31,6 +31,9 @@ pub struct ProductListItem {
     #[diesel(sql_type = Nullable<Integer>)]
     pub first_release_date: Option<i32>,
 
+    #[diesel(sql_type = Nullable<BigInt>)]
+    pub release_date: Option<i64>,
+
     #[diesel(sql_type = Nullable<Text>)]
     pub image_url: Option<String>,
 
@@ -85,7 +88,7 @@ fn build_cache_key(
 ) -> String {
     // JSON encoding keeps delimiters in user-supplied search strings unambiguous.
     format!(
-        "cache:v10:catalog:regions:{}",
+        "cache:v11:catalog:regions:{}",
         serde_json::json!([cat, limit, offset, query, ignore_digital, sort])
     )
 }
@@ -240,7 +243,7 @@ pub async fn list(
 
     let (order_column, order_direction, nulls_order) = match sort.as_str() {
         "rating" => ("p.total_rating", "DESC", "NULLS LAST"),
-        "date" => ("p.first_release_date", "ASC", "NULLS LAST"),
+        "date" => ("release_date", "ASC", "NULLS LAST"),
         _ => ("p.name", "ASC", "NULLS LAST"),
     };
 
@@ -258,6 +261,8 @@ pub async fn list(
         String::new()
     };
     let search_predicate = search_filter(serial_search, "$4", "$3", "$12");
+    let dates = crate::release_dates::map_sql("p", "$4");
+    let selected_date = crate::release_dates::selected_sql("release_dates.dates", "$12");
     let sql = format!(
         r#"
         SELECT 
@@ -273,6 +278,7 @@ pub async fn list(
             ) AS serial,
             EXISTS(SELECT 1 FROM product_platforms pp WHERE pp.product_id=p.id AND pp.platform_id=$4 AND pp.digital_only) AS digital_only,
             p.first_release_date AS first_release_date,
+            {selected_date} AS release_date,
             p.total_rating,
             p.total_rating_count,
             (SELECT NULLIF(MAX(GREATEST(m.offlinemax,m.offlinecoopmax)),0) FROM product_multiplayer_modes m WHERE m.game=p.id AND m.platform=$4) AS local_players,
@@ -284,6 +290,7 @@ pub async fn list(
             '//89.104.66.193/static/covers-full/' || c.id || '.jpg' AS image_url
         FROM products p
         LEFT JOIN covers c ON p.cover_id = c.id
+        CROSS JOIN LATERAL (SELECT {dates} AS dates OFFSET 0) release_dates
         WHERE EXISTS (
             SELECT 1 
             FROM product_platforms pp 

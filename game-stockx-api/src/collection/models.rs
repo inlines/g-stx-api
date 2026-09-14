@@ -1,5 +1,5 @@
 use diesel::prelude::*;
-use diesel::sql_types::{Array, BigInt, Bool, Integer, Nullable, Text};
+use diesel::sql_types::{Array, BigInt, Bool, Integer, Jsonb, Nullable, Text};
 use serde::{Deserialize, Serialize};
 
 #[derive(Deserialize)]
@@ -12,6 +12,8 @@ pub(crate) struct TrackReleaseRequest {
 
 #[derive(Serialize, QueryableByName)]
 pub(crate) struct CollectionItem {
+    #[diesel(sql_type = Jsonb)]
+    pub(crate) release_dates: serde_json::Value,
     #[diesel(sql_type = Integer)]
     pub(crate) platform_id: i32,
     #[diesel(sql_type = Nullable<Integer>)]
