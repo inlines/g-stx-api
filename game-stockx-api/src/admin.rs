@@ -9,7 +9,7 @@ use actix::Addr;
 use actix_web::{HttpRequest, HttpResponse, ResponseError, http::StatusCode, web};
 use diesel::{
     prelude::*,
-    sql_types::{BigInt, Bool, Integer, Nullable, Text, Timestamp},
+    sql_types::{BigInt, Bool, Integer, Nullable, Text, Timestamp, Timestamptz},
 };
 use serde::{Deserialize, Serialize};
 
@@ -78,6 +78,15 @@ pub struct UserInfo {
     #[diesel(sql_type = Nullable<Timestamp>)]
     created_at: Option<chrono::NaiveDateTime>,
 }
+// Last-seen history is exposed only in the administrator list, not public profiles.
+#[derive(QueryableByName, Serialize)]
+struct AdminUserInfo {
+    #[diesel(embed)]
+    #[serde(flatten)]
+    user: UserInfo,
+    #[diesel(sql_type = Nullable<Timestamptz>)]
+    last_seen_at: Option<chrono::DateTime<chrono::Utc>>,
+}
 fn current(conn: &mut PgConnection, claims: &Claims) -> Result<UserInfo, AdminError> {
     diesel::sql_query(
         "SELECT id, user_login, is_admin, created_at FROM users WHERE id=$1 AND user_login=$2",
@@ -144,8 +153,8 @@ async fn users(
             require_admin(conn, &claims)?;
             let total = diesel::sql_query("SELECT COUNT(*) AS total FROM users WHERE strpos(lower(user_login), lower($1)) > 0")
                 .bind::<Text,_>(&search).get_result::<Count>(conn)?.total;
-            let items = diesel::sql_query("SELECT id, user_login, is_admin, created_at FROM users WHERE strpos(lower(user_login), lower($1)) > 0 ORDER BY lower(user_login), id LIMIT $2 OFFSET $3")
-                .bind::<Text,_>(&search).bind::<BigInt,_>(limit).bind::<BigInt,_>(offset).load::<UserInfo>(conn)?;
+            let items = diesel::sql_query("SELECT id, user_login, is_admin, created_at, last_seen_at FROM users WHERE strpos(lower(user_login), lower($1)) > 0 ORDER BY lower(user_login), id LIMIT $2 OFFSET $3")
+                .bind::<Text,_>(&search).bind::<BigInt,_>(limit).bind::<BigInt,_>(offset).load::<AdminUserInfo>(conn)?;
             Ok((items, total))
         })
     }).await?;

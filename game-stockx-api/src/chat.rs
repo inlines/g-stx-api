@@ -352,6 +352,8 @@ pub struct ChatSession {
     authenticated: bool,
     user_id: i32,
     last_typing: Option<std::time::Instant>,
+    last_seen_write: Option<std::time::Instant>,
+    db_pool: DBPool,
 }
 
 #[derive(Deserialize)]
@@ -368,6 +370,34 @@ struct OutgoingMessage {
 }
 
 impl ChatSession {
+    // A confirmed authenticated frame is evidence of presence, not a timeout.
+    // Keep this outside actor futures so closing a tab does not cancel the write.
+    fn record_presence(&mut self) {
+        if !self.authenticated
+            || self
+                .last_seen_write
+                .is_some_and(|last| last.elapsed() < std::time::Duration::from_secs(30))
+        {
+            return;
+        }
+        self.last_seen_write = Some(std::time::Instant::now());
+        let pool = self.db_pool.clone();
+        let uid = self.user_id;
+        let login = self.login.clone();
+        let seen_at = Utc::now();
+        actix_rt::spawn(async move {
+            let result = spawn_blocking(move || -> Result<(), String> {
+                let mut conn = pool.get().map_err(|e| e.to_string())?;
+                diesel::sql_query("UPDATE users SET last_seen_at=$3 WHERE id=$1 AND user_login=$2 AND (last_seen_at IS NULL OR last_seen_at < $3 - interval '25 seconds')")
+                    .bind::<Integer,_>(uid).bind::<Text,_>(login).bind::<Timestamptz,_>(seen_at)
+                    .execute(&mut conn).map_err(|e| e.to_string())?;
+                Ok(())
+            }).await;
+            if !matches!(result, Ok(Ok(()))) {
+                log::warn!("Could not persist last-seen presence");
+            }
+        });
+    }
     fn reject(&self, ctx: &mut ws::WebsocketContext<Self>) {
         ctx.close(Some(ws::CloseReason {
             code: ws::CloseCode::Policy,
@@ -430,6 +460,7 @@ impl StreamHandler<Result<ws::Message, ProtocolError>> for ChatSession {
                     self.user_id = claims.uid;
                     self.login = claims.sub;
                     self.authenticated = true;
+                    self.record_presence();
                     self.addr.do_send(ChatCommand::Connect {
                         login: self.login.clone(),
                         addr: ctx.address().recipient(),
@@ -449,6 +480,7 @@ impl StreamHandler<Result<ws::Message, ProtocolError>> for ChatSession {
                     self.reject(ctx);
                     return;
                 }
+                self.record_presence();
                 let value = serde_json::from_str::<serde_json::Value>(&text).ok();
                 match value
                     .as_ref()
@@ -524,10 +556,12 @@ impl StreamHandler<Result<ws::Message, ProtocolError>> for ChatSession {
             }
             Ok(ws::Message::Ping(msg)) => {
                 self.heartbeat = std::time::Instant::now();
+                self.record_presence();
                 ctx.pong(&msg);
             }
             Ok(ws::Message::Pong(_)) => {
                 self.heartbeat = std::time::Instant::now();
+                self.record_presence();
             }
             Ok(ws::Message::Close(reason)) => {
                 println!("WebSocket closed: {:?}", reason);
@@ -569,6 +603,7 @@ pub async fn chat_ws(
     req: HttpRequest,
     stream: web::Payload,
     srv: web::Data<Addr<ChatServer>>,
+    pool: web::Data<DBPool>,
 ) -> Result<HttpResponse, Error> {
     let session = ChatSession {
         login: String::new(),
@@ -578,6 +613,8 @@ pub async fn chat_ws(
         authenticated: false,
         user_id: 0,
         last_typing: None,
+        last_seen_write: None,
+        db_pool: pool.get_ref().clone(),
     };
     ws::start(session, &req, stream)
 }

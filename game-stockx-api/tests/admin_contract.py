@@ -108,7 +108,7 @@ try:
         request('/api/admin/users', forged, status=401)
         page = request('/api/admin/users?query=ORD&limit=1', admin)
         assert page['total_count'] == 1 and page['items'][0]['user_login'] == 'ordinary'
-        assert set(page['items'][0]) == {'id','user_login','is_admin','created_at'}
+        assert set(page['items'][0]) == {'id','user_login','is_admin','created_at','last_seen_at'}
         assert request('/api/admin/users?query=%25', admin)['total_count'] == 0
         assert request('/api/admin/users?limit=1&offset=1', admin)['items'][0]['user_login'] == 'segasanshiro'
         request('/api/admin/users/2147483647/promote', admin, data={}, status=404)
@@ -134,6 +134,12 @@ try:
             UPDATE users SET avatar=decode('89504e47','hex') WHERE user_login='victim';
             INSERT INTO messages(sender_login,recipient_login,body) VALUES('victim','ordinary','out'),('ordinary','victim','in'),('ordinary','segasanshiro','keep');
         """)
+        print(run(['node', str(ROOT / 'tests/last_seen.mjs')], input=json.dumps({'base':base,'admin':admin,'victim':victim})))
+        seen_before_restart = sql("SELECT last_seen_at FROM users WHERE user_login='victim'")
+        process.terminate(); process.wait(timeout=10)
+        start()
+        assert sql("SELECT last_seen_at FROM users WHERE user_login='victim'") == seen_before_restart
+        assert 'last_seen_at' not in request('/api/profile/me', admin), 'history is only exposed in admin list'
         def restart_for_cache_test():
             process.terminate(); process.wait(timeout=10)
             start()
