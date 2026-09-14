@@ -36,7 +36,8 @@ def exercise(request, sql):
         (210,210,48,1,NULL,false),
         (211,211,48,1,ARRAY[NULL,'','  '],false),
         (212,211,167,1,NULL,false);
-      UPDATE releases SET release_date=1500000000 WHERE id IN (200,202,203,209,210,212);
+      UPDATE releases SET release_date=1500000000 WHERE id IN (200,202,203,206,209,210,212);
+      UPDATE releases SET release_status=6 WHERE id=204;
       INSERT INTO product_platforms(product_id,platform_id,digital_only) VALUES(215,167,false);
       INSERT INTO releases(id,product_id,platform,release_region,release_date,release_status,serial) VALUES
         (213,213,48,1,1500000000,5,NULL),
@@ -60,13 +61,14 @@ def exercise(request, sql):
     def ids(**params):
         return {p['id'] for p in catalog(**params)['items'] if p['id'] >= 200}
 
-    expected = {200, 204, 206, 209, 210, 216}
-    extended = expected | {201, 203, 205, 211, 213, 214, 215}
-    assert ids() == expected, 'Require a date or nonblank serial on the selected platform'
+    expected = {200, 206, 209, 210, 216}
+    extended = expected | {201, 203, 204, 205, 211, 213, 214, 215}
+    assert ids() == expected, 'Require a non-cancelled dated release on the selected platform'
     assert ids(query='Visibility') == expected, 'Search must respect visibility and game-type exclusions'
     assert ids(query='Secret alias') == set()
     assert ids(query='Secret alias', include_unreleased='true') == {201}
-    assert ids(query='undated') == {204}, 'Serial confirms an undated physical release'
+    assert ids(query='undated') == set(), 'An existing serial must not bypass the missing date'
+    assert ids(query='undated', include_unreleased='true') == {204}
     assert ids(query='Super Mario War') == set(), 'A date on another platform must not leak'
     assert ids(query='Super Mario War', include_unreleased='true') == {211}
     assert ids(query='Cancelled') == set(), 'Cancelled dates and even serials must not bypass the gate'
@@ -91,9 +93,11 @@ def exercise(request, sql):
         assert unknown['total_count'] == len(unknown['items'])
         for region in ['europe', 'america', 'japan', 'other']:
             assert unknown['region_counts'][region] == catalog(unknown='true', include_unreleased=include, regions=region)['total_count']
-    # Adding the first dated/identified release makes the platform visible.
+    # Adding a serial alone must not reveal the game; filling the date does.
     sql("INSERT INTO releases(id,product_id,platform,release_region,serial) VALUES(201,201,48,1,ARRAY['TEST-201']); UPDATE catalog_cache_revision SET revision=revision+1 WHERE id=1;")
+    assert ids() == expected
+    sql("UPDATE releases SET release_date=1500000000 WHERE id=201; UPDATE catalog_cache_revision SET revision=revision+1 WHERE id=1;")
     assert ids() == expected | {201}
     assert next(p for p in catalog()['items'] if p['id'] == 201)['has_serials'] is True
     sql("DELETE FROM alternative_names WHERE id=99999; DELETE FROM game_bundles WHERE bundle_id=200; DELETE FROM products WHERE id BETWEEN 200 AND 216; DELETE FROM platforms WHERE id=167; UPDATE catalog_cache_revision SET revision=revision+1 WHERE id=1;")
-    print('PASS: platform-specific date/serial/cancellation gate, mixed release statuses, blank serials, unknown game date, alias search, checkbox/cache separation and pagination')
+    print('PASS: strict platform date/cancellation gate (serials never bypass), mixed release statuses, blank serials, unknown game date, alias search, checkbox/cache separation and pagination')

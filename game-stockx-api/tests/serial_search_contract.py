@@ -11,6 +11,7 @@ def exercise(request, sql):
         (701,700,48,2,ARRAY['CUSA-10002']),
         (702,700,167,1,ARRAY['PPSA-10003']),
         (703,701,48,8,ARRAY['CUSA-10004']);
+      UPDATE releases SET release_date=1500000000 WHERE id BETWEEN 700 AND 703;
       UPDATE catalog_cache_revision SET revision=revision+1;
     """)
     def search(code,region='',cat=48,**kw):
