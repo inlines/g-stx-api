@@ -10,6 +10,7 @@ def exercise(request, sql, admin_request, nonadmin_request):
         (300,300,48,1,false),(301,300,48,1,false),(302,300,48,2,false),
         (303,301,48,10,false),(304,302,48,NULL,false),(305,303,48,8,true),
         (306,304,48,1,false),(307,305,48,5,false),(308,305,167,1,false);
+      UPDATE releases SET release_date=1500000000 WHERE id BETWEEN 300 AND 308;
       INSERT INTO users_have_releases(user_login,release_id) VALUES('ordinary',300),('ordinary',302),('ordinary',304),('ordinary',305);
       UPDATE catalog_cache_revision SET revision=revision+1 WHERE id=1;""")
     def catalog(regions):return request('/api/products?cat=48&limit=15&offset=0&ignore_digital=true&regions='+regions)

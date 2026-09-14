@@ -88,17 +88,25 @@ fn build_cache_key(
 ) -> String {
     // JSON encoding keeps delimiters in user-supplied search strings unambiguous.
     format!(
-        "cache:v12:catalog:regions:{}",
+        "cache:v13:catalog:regions:{}",
         serde_json::json!([cat, limit, offset, query, ignore_digital, sort])
     )
 }
 
 // Shared by the list and count queries. Digital filtering stays on
-// product_platforms.digital_only; serial availability does not affect visibility.
-fn visibility_filter(unreleased: &str) -> String {
+// product_platforms.digital_only. A dated release or a serial must belong to
+// the selected platform; the global game date cannot prove a platform release.
+fn visibility_filter(unreleased: &str, platform: &str) -> String {
     format!(
         r#"
-        AND ({unreleased} OR p.first_release_date IS NOT NULL)
+        AND ({unreleased} OR EXISTS (
+            SELECT 1 FROM releases available
+            WHERE available.product_id=p.id AND available.platform={platform}
+              AND (available.release_date IS NOT NULL OR EXISTS (
+                  SELECT 1 FROM unnest(available.serial) serial(value)
+                  WHERE btrim(serial.value)<>''
+              ))
+        ))
         AND (p.game_type NOT IN (1, 2, 4, 13, 6, 5) OR p.game_type IS NULL)
     "#
     )
@@ -252,7 +260,7 @@ pub async fn list(
     let features_filter = format!(
         " AND (NOT $9 OR EXISTS(SELECT 1 FROM product_multiplayer_modes m WHERE m.game=p.id AND m.platform=$4 AND {local})) AND (NOT $10 OR EXISTS(SELECT 1 FROM product_multiplayer_modes m WHERE m.game=p.id AND m.platform=$4 AND {online})) "
     );
-    let visibility = visibility_filter("$11");
+    let visibility = visibility_filter("$11", "$4");
     let region_filter = build_region_filter("$4", "$12");
     let serials = serials_exist("$4");
     let unknown_filter = if unknown {
@@ -332,7 +340,7 @@ pub async fn list(
         .replace("$9", "$7")
         .replace("$10", "$8")
         .replace("$4", "$1");
-    let visibility = visibility_filter("$9");
+    let visibility = visibility_filter("$9", "$1");
     let region_filter = build_region_filter("$1", "$10");
     let unknown_filter = if unknown {
         format!("AND NOT {}", serials_exist("$1"))

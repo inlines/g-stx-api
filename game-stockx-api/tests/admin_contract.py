@@ -127,7 +127,7 @@ try:
         sql("""INSERT INTO products(id,name,summary,first_release_date) VALUES(1,'Fixture','',1500000000);
             INSERT INTO platforms(id,name,abbreviation) VALUES(48,'PlayStation 4','PS4');
             INSERT INTO regions(id,name) VALUES(1,'Europe');
-            INSERT INTO releases(id,product_id,platform,release_region) VALUES(1,1,48,1);
+            INSERT INTO releases(id,product_id,platform,release_region,release_date) VALUES(1,1,48,1,1500000000);
             INSERT INTO users_have_releases(release_id,user_login) VALUES(1,'victim'),(1,'ordinary');
             INSERT INTO users_have_wishes(release_id,user_login) VALUES(1,'victim');
             INSERT INTO users_have_wts(release_id,user_login,price,cib) VALUES(1,'victim',100,true),(1,'ordinary',200,false);

@@ -15,9 +15,11 @@ def exercise(request, sql):
         (206,'Visibility digital release','',1500000000,0,NULL),
         (207,'Visibility physical child','',1500000000,1,200),
         (208,'Visibility unknown child','',1500000000,1,200),
-        (209,'Visibility 100%_game','',1500000000,0,NULL);
+        (209,'Visibility 100%_game','',1500000000,0,NULL),
+        (210,'Visibility platform date only','',NULL,0,NULL),
+        (211,'Visibility Super Mario War analogue','',1500000000,0,NULL);
       INSERT INTO product_platforms(product_id,platform_id,digital_only)
-        SELECT id,48,id=202 FROM products WHERE id BETWEEN 200 AND 209;
+        SELECT id,48,id=202 FROM products WHERE id BETWEEN 200 AND 211;
       INSERT INTO releases(id,product_id,platform,release_region,serial,digital_only) VALUES
         (200,200,48,1,ARRAY['TEST-200'],false),
         (202,202,48,1,ARRAY['TEST-202'],false),
@@ -25,7 +27,12 @@ def exercise(request, sql):
         (204,204,48,1,ARRAY['TEST-204'],false),
         (205,205,48,1,ARRAY[NULL,'','   '],false),
         (206,206,48,1,ARRAY['TEST-206'],true),
-        (207,207,48,1,ARRAY['TEST-207'],false);
+        (207,207,48,1,ARRAY['TEST-207'],false),
+        (209,209,48,1,NULL,false),
+        (210,210,48,1,NULL,false),
+        (211,211,48,1,ARRAY[NULL,'','  '],false),
+        (212,211,167,1,NULL,false);
+      UPDATE releases SET release_date=1500000000 WHERE id IN (200,202,203,209,210,212);
       INSERT INTO alternative_names(id,product_id,name) VALUES(99999,201,'Secret alias');
       INSERT INTO game_bundles(member_id,bundle_id) VALUES(207,200),(208,200);
       UPDATE catalog_cache_revision SET revision=revision+1 WHERE id=1;
@@ -41,26 +48,36 @@ def exercise(request, sql):
     def ids(**params):
         return {p['id'] for p in catalog(**params)['items'] if p['id'] >= 200}
 
-    expected = {200, 201, 203, 205, 206, 209}
-    assert ids() == expected, 'Missing serials must not hide games; only platform digital_only excludes them'
-    assert ids(query='Visibility') == expected, 'Search must not bypass the original game-type exclusions'
-    assert ids(query='Secret alias') == {201}
-    assert ids(query='undated') == set(), 'Search cannot bypass the release-date gate'
-    assert ids(query='undated', include_unreleased='true') == {204}
-    assert ids(include_unreleased='true') == expected | {204}
+    expected = {200, 204, 206, 209, 210}
+    extended = expected | {201, 203, 205, 211}
+    assert ids() == expected, 'Require a date or nonblank serial on the selected platform'
+    assert ids(query='Visibility') == expected, 'Search must respect visibility and game-type exclusions'
+    assert ids(query='Secret alias') == set()
+    assert ids(query='Secret alias', include_unreleased='true') == {201}
+    assert ids(query='undated') == {204}, 'Serial confirms an undated physical release'
+    assert ids(query='Super Mario War') == set(), 'A date on another platform must not leak'
+    assert ids(query='Super Mario War', include_unreleased='true') == {211}
+    assert ids(include_unreleased='true') == extended
     assert ids(include_unreleased='false') == expected, 'Cached inclusion must not leak'
     assert ids(ignore_digital='false') == expected | {202}
     assert ids(ignore_digital='false', query='Visibility') == expected | {202}
-    assert 204 not in ids(ignore_digital='false', query='Visibility')
     assert next(p for p in catalog()['items'] if p['id'] == 206)['has_serials'] is True
-    all_visible = catalog()
-    assert all_visible['total_count'] == len(all_visible['items'])
-    page = catalog(limit=1, offset=1)
-    assert page['total_count'] == all_visible['total_count']
-    assert page['items'] == all_visible['items'][1:2]
-    # Adding a serial updates the badge, not catalogue membership.
+    for include in ['false', 'true']:
+        all_visible = catalog(include_unreleased=include)
+        assert all_visible['total_count'] == len(all_visible['items'])
+        page = catalog(limit=1, offset=1, include_unreleased=include)
+        assert page['total_count'] == all_visible['total_count']
+        assert page['items'] == all_visible['items'][1:2]
+    assert ids(unknown='true') == {209, 210}
+    assert ids(unknown='true', include_unreleased='true') == {201, 203, 205, 209, 210, 211}
+    for include in ['false', 'true']:
+        unknown = catalog(unknown='true', include_unreleased=include)
+        assert unknown['total_count'] == len(unknown['items'])
+        for region in ['europe', 'america', 'japan', 'other']:
+            assert unknown['region_counts'][region] == catalog(unknown='true', include_unreleased=include, regions=region)['total_count']
+    # Adding the first dated/identified release makes the platform visible.
     sql("INSERT INTO releases(id,product_id,platform,release_region,serial) VALUES(201,201,48,1,ARRAY['TEST-201']); UPDATE catalog_cache_revision SET revision=revision+1 WHERE id=1;")
-    assert ids() == expected
+    assert ids() == expected | {201}
     assert next(p for p in catalog()['items'] if p['id'] == 201)['has_serials'] is True
-    sql("DELETE FROM alternative_names WHERE id=99999; DELETE FROM game_bundles WHERE bundle_id=200; DELETE FROM products WHERE id BETWEEN 200 AND 209; DELETE FROM platforms WHERE id=167; UPDATE catalog_cache_revision SET revision=revision+1 WHERE id=1;")
-    print('PASS: restored digital filtering independent of serials, original game types and alias search, date gate, cache separation, counts and pagination')
+    sql("DELETE FROM alternative_names WHERE id=99999; DELETE FROM game_bundles WHERE bundle_id=200; DELETE FROM products WHERE id BETWEEN 200 AND 211; DELETE FROM platforms WHERE id=167; UPDATE catalog_cache_revision SET revision=revision+1 WHERE id=1;")
+    print('PASS: platform-specific date/serial gate, blank serials, unknown game date, alias search, checkbox/cache separation and pagination')
