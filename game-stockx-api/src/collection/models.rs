@@ -5,7 +5,6 @@ use serde::{Deserialize, Serialize};
 #[derive(Deserialize)]
 pub(crate) struct TrackReleaseRequest {
     pub(crate) release_id: i32,
-    pub(crate) product_id: Option<i32>,
     pub(crate) price: Option<i32>,
     pub(crate) cib: Option<bool>,
 }

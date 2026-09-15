@@ -1,9 +1,8 @@
 use crate::DBPool;
-use crate::constants::CONNECTION_POOL_ERROR;
 use crate::metrics::{FAILED_LOGIN_ATTEMPTS, SUCCESSFUL_LOGINS};
 use actix_web::{HttpRequest, HttpResponse, post, web};
 use argon2::password_hash::PasswordHash;
-use argon2::{Argon2, PasswordVerifier};
+use argon2::{Argon2, PasswordHasher, PasswordVerifier};
 use diesel::prelude::*;
 use jsonwebtoken::{DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use rand_core::{OsRng, RngCore};
@@ -13,6 +12,7 @@ use std::sync::OnceLock;
 struct AuthContext {
     secret: Vec<u8>,
     pool: DBPool,
+    dummy_hash: String,
 }
 static AUTH: OnceLock<AuthContext> = OnceLock::new();
 
@@ -33,23 +33,33 @@ pub fn initialize(pool: DBPool) -> Result<(), Box<dyn std::error::Error>> {
     .execute(&mut conn)?;
     let key = diesel::sql_query("SELECT secret FROM auth_signing_keys WHERE id = 1")
         .get_result::<Key>(&mut conn)?;
+    let salt = argon2::password_hash::SaltString::generate(&mut OsRng);
+    let dummy_hash = Argon2::default()
+        .hash_password(b"dummy-login-comparison", &salt)
+        .map_err(|e| e.to_string())?
+        .to_string();
     AUTH.set(AuthContext {
         secret: key.secret,
         pool,
+        dummy_hash,
     })
     .map_err(|_| "Authentication already initialized")?;
     Ok(())
 }
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Claims {
     pub sub: String,
     pub uid: i32,
     pub exp: usize,
+    #[serde(default)]
+    pub ver: i64,
 }
 
 #[derive(QueryableByName)]
 struct User {
+    #[diesel(sql_type = diesel::sql_types::BigInt)]
+    auth_version: i64,
     #[diesel(sql_type = diesel::sql_types::Integer)]
     id: i32,
     #[diesel(sql_type = diesel::sql_types::Text)]
@@ -59,7 +69,7 @@ struct User {
     password_hash: String,
 }
 
-fn create_jwt(email: &str, uid: i32, secret: &[u8]) -> String {
+fn create_jwt(email: &str, uid: i32, ver: i64, secret: &[u8]) -> String {
     let expiration = chrono::Utc::now()
         .checked_add_signed(chrono::Duration::hours(24))
         .unwrap()
@@ -69,6 +79,7 @@ fn create_jwt(email: &str, uid: i32, secret: &[u8]) -> String {
         sub: email.to_owned(),
         uid,
         exp: expiration,
+        ver,
     };
 
     encode(
@@ -87,7 +98,7 @@ fn decode_jwt(token: &str, secret: &[u8]) -> Option<Claims> {
         .ok()
 }
 
-pub fn account_exists(uid: i32, account_login: &str) -> bool {
+pub fn session_valid(uid: i32, account_login: &str, ver: i64) -> bool {
     let Some(auth) = AUTH.get() else {
         return false;
     };
@@ -100,10 +111,11 @@ pub fn account_exists(uid: i32, account_login: &str) -> bool {
         present: bool,
     }
     diesel::sql_query(
-        "SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND user_login = $2) AS present",
+        "SELECT EXISTS(SELECT 1 FROM users WHERE id = $1 AND user_login = $2 AND auth_version = $3) AS present",
     )
     .bind::<diesel::sql_types::Integer, _>(uid)
     .bind::<diesel::sql_types::Text, _>(account_login)
+    .bind::<diesel::sql_types::BigInt, _>(ver)
     .get_result::<Exists>(&mut conn)
     .is_ok_and(|row| row.present)
 }
@@ -112,7 +124,7 @@ pub fn verify_jwt(token: &str) -> Option<Claims> {
     let claims = decode_jwt(token, &AUTH.get()?.secret)?;
     // The immutable account ID prevents a deleted user's JWT from being reused
     // after someone registers the same login again.
-    account_exists(claims.uid, &claims.sub).then_some(claims)
+    session_valid(claims.uid, &claims.sub, claims.ver).then_some(claims)
 }
 
 fn verify_password(password: &str, hash: &str) -> bool {
@@ -132,45 +144,60 @@ struct LoginRequest {
 
 #[post("/login")]
 async fn login(pool: web::Data<DBPool>, credentials: web::Json<LoginRequest>) -> HttpResponse {
-    let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
-
-    let query = r#"
-        SELECT id, user_login, password_hash
-        FROM users
-        WHERE user_login = $1
-        LIMIT 1
-    "#;
-
-    let result = diesel::sql_query(query)
-        .bind::<diesel::sql_types::Text, _>(&credentials.user_login)
-        .get_result::<User>(conn);
-
+    // Preserve login for existing accounts; only new registrations enforce the new policy.
+    if credentials.user_login.len() > 256 || credentials.password.len() > 4096 {
+        return HttpResponse::BadRequest().body("Credentials too long");
+    }
+    if !crate::security_limits::allow(
+        format!("login:{}", credentials.user_login.to_ascii_lowercase()),
+        10,
+        1.0 / 6.0,
+    ) {
+        return HttpResponse::TooManyRequests()
+            .insert_header(("Retry-After", "6"))
+            .finish();
+    }
+    let Some(hash_slot) = crate::password_policy::hash_slot() else {
+        return HttpResponse::ServiceUnavailable()
+            .insert_header(("Retry-After", "1"))
+            .finish();
+    };
+    let result = web::block(move || -> Result<Option<User>, String> {
+        let _hash_slot = hash_slot;
+        let mut conn=pool.get().map_err(|e| e.to_string())?;
+        let user=diesel::sql_query("SELECT id,user_login,password_hash,auth_version FROM users WHERE user_login=$1 LIMIT 1")
+            .bind::<diesel::sql_types::Text,_>(&credentials.user_login)
+            .get_result::<User>(&mut conn).optional().map_err(|e| e.to_string())?;
+        // Do the same expensive comparison for unknown users; do not retain a pool slot during hashing.
+        drop(conn);
+        let hash=user.as_ref().map(|u| u.password_hash.as_str())
+            .unwrap_or(&AUTH.get().expect("Authentication initialized").dummy_hash);
+        if verify_password(&credentials.password,hash) { Ok(user) } else { Ok(None) }
+    }).await;
     match result {
-        Ok(user) => {
-            if verify_password(&credentials.password, &user.password_hash) {
-                SUCCESSFUL_LOGINS.inc();
-                let token = create_jwt(
-                    &user.user_login,
-                    user.id,
-                    &AUTH.get().expect("Authentication initialized").secret,
-                );
-                HttpResponse::Ok().json(serde_json::json!({ "token": token }))
-            } else {
-                // НЕВЕРНЫЙ ПАРОЛЬ
-                FAILED_LOGIN_ATTEMPTS
-                    .with_label_values(&["invalid_password"])
-                    .inc();
-                HttpResponse::Unauthorized().body("Invalid credentials")
-            }
+        Ok(Ok(Some(user))) => {
+            SUCCESSFUL_LOGINS.inc();
+            let token = create_jwt(
+                &user.user_login,
+                user.id,
+                user.auth_version,
+                &AUTH.get().expect("Authentication initialized").secret,
+            );
+            HttpResponse::Ok()
+                .insert_header(("Cache-Control", "no-store"))
+                .json(serde_json::json!({"token":token}))
         }
-        Err(error) => {
-            let reason = if matches!(error, diesel::result::Error::NotFound) {
-                "user_not_found"
-            } else {
-                "database_error"
-            };
-            FAILED_LOGIN_ATTEMPTS.with_label_values(&[reason]).inc();
+        Ok(Ok(None)) => {
+            FAILED_LOGIN_ATTEMPTS
+                .with_label_values(&["invalid_credentials"])
+                .inc();
             HttpResponse::Unauthorized().body("Invalid credentials")
+        }
+        _ => {
+            FAILED_LOGIN_ATTEMPTS
+                .with_label_values(&["database_error"])
+                .inc();
+            HttpResponse::ServiceUnavailable().body("Login temporarily unavailable")
         }
     }
 }
@@ -219,7 +246,7 @@ mod tests {
 
     #[actix_web::test]
     async fn valid_token_preserves_the_login() {
-        let token = create_jwt("collector", 42, b"test-key");
+        let token = create_jwt("collector", 42, 0, b"test-key");
         let request = TestRequest::default()
             .insert_header((header::AUTHORIZATION, format!("Bearer {token}")))
             .to_http_request();
@@ -237,6 +264,7 @@ mod tests {
             sub: "collector".to_owned(),
             uid: 42,
             exp: 1,
+            ver: 0,
         };
         let token = encode(
             &Header::default(),

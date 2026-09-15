@@ -20,6 +20,18 @@ pub struct Pagination {
     pub company_role: Option<String>,
 }
 
+pub fn page_bounds(
+    limit: Option<i64>,
+    offset: Option<i64>,
+    maximum: i64,
+) -> Result<(i64, i64), actix_web::HttpResponse> {
+    let limit = limit.unwrap_or(100);
+    let offset = offset.unwrap_or(0);
+    if !(1..=maximum).contains(&limit) || !(0..=1_000_000).contains(&offset) {
+        return Err(actix_web::HttpResponse::BadRequest().body("Invalid pagination"));
+    }
+    Ok((limit, offset))
+}
 impl Pagination {
     pub fn region_groups(&self) -> Result<Vec<String>, ()> {
         let mut groups: Vec<String> = self

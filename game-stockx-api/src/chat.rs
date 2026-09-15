@@ -41,6 +41,12 @@ pub struct ClientMessage {
 #[rtype(result = "()")]
 #[serde(untagged)]
 pub enum ServerEvent {
+    Revalidate {
+        r#type: &'static str,
+    },
+    ConnectionLimit {
+        r#type: &'static str,
+    },
     Message(ClientMessage),
     Unread {
         r#type: &'static str,
@@ -79,6 +85,9 @@ pub enum ServerEvent {
 #[derive(Message)]
 #[rtype(result = "()")]
 pub enum ChatCommand {
+    RevalidateUser {
+        login: String,
+    },
     NotifyAdmins {
         request_id: i32,
         kind: String,
@@ -155,6 +164,12 @@ impl Handler<ChatCommand> for ChatServer {
 
     fn handle(&mut self, msg: ChatCommand, ctx: &mut Context<Self>) -> Self::Result {
         match msg {
+            ChatCommand::RevalidateUser { login } => self.deliver(
+                &login,
+                ServerEvent::Revalidate {
+                    r#type: "session_check",
+                },
+            ),
             ChatCommand::NotifyAdmins { request_id, kind } => {
                 let pool = self.db_pool.clone();
                 ctx.spawn(
@@ -236,6 +251,16 @@ impl Handler<ChatCommand> for ChatServer {
                 );
             }
             ChatCommand::Connect { login, addr } => {
+                if self
+                    .sessions
+                    .get(&login)
+                    .is_some_and(|sessions| sessions.len() >= 8)
+                {
+                    addr.do_send(ServerEvent::ConnectionLimit {
+                        r#type: "connection_limit",
+                    });
+                    return;
+                }
                 println!("ConnectedWS: {}", login.clone());
 
                 let was_online = self.sessions.contains_key(&login);
@@ -351,6 +376,7 @@ pub struct ChatSession {
     heartbeat: std::time::Instant,
     authenticated: bool,
     user_id: i32,
+    auth_version: i64,
     last_typing: Option<std::time::Instant>,
     last_seen_write: Option<std::time::Instant>,
     db_pool: DBPool,
@@ -398,6 +424,16 @@ impl ChatSession {
             }
         });
     }
+    fn limited(&self, ctx: &mut ws::WebsocketContext<Self>, text: &str) {
+        if let Ok(parsed) = serde_json::from_str::<OutgoingMessage>(text) {
+            ctx.text(
+                serde_json::json!({"type":"send_failed","client_id":parsed.client_id}).to_string(),
+            );
+        }
+        if crate::security_limits::allow(format!("ws-notice:{}", self.user_id), 1, 0.2) {
+            ctx.text(serde_json::json!({"type":"rate_limited","retry_after":1}).to_string());
+        }
+    }
     fn reject(&self, ctx: &mut ws::WebsocketContext<Self>) {
         ctx.close(Some(ws::CloseReason {
             code: ws::CloseCode::Policy,
@@ -424,7 +460,11 @@ impl Actor for ChatSession {
                 return;
             }
             if session.authenticated
-                && !crate::auth::account_exists(session.user_id, &session.login)
+                && !crate::auth::session_valid(
+                    session.user_id,
+                    &session.login,
+                    session.auth_version,
+                )
             {
                 session.reject(ctx);
                 return;
@@ -458,6 +498,7 @@ impl StreamHandler<Result<ws::Message, ProtocolError>> for ChatSession {
                         return;
                     };
                     self.user_id = claims.uid;
+                    self.auth_version = claims.ver;
                     self.login = claims.sub;
                     self.authenticated = true;
                     self.record_presence();
@@ -476,7 +517,11 @@ impl StreamHandler<Result<ws::Message, ProtocolError>> for ChatSession {
                     );
                     return;
                 }
-                if !crate::auth::account_exists(self.user_id, &self.login) {
+                if !crate::security_limits::allow(format!("ws-frame:{}", self.user_id), 60, 30.0) {
+                    self.limited(ctx, &text);
+                    return;
+                }
+                if !crate::auth::session_valid(self.user_id, &self.login, self.auth_version) {
                     self.reject(ctx);
                     return;
                 }
@@ -488,6 +533,19 @@ impl StreamHandler<Result<ws::Message, ProtocolError>> for ChatSession {
                     .and_then(|v| v.as_str())
                 {
                     Some("read") => {
+                        if !crate::security_limits::allow(
+                            format!("ws-read:{}", self.user_id),
+                            30,
+                            10.0,
+                        ) {
+                            // Reconnect refreshes receipts instead of silently losing an acknowledgment.
+                            ctx.close(Some(ws::CloseReason {
+                                code: ws::CloseCode::Again,
+                                description: Some("Read rate exceeded".into()),
+                            }));
+                            ctx.stop();
+                            return;
+                        }
                         if let Some(ids) = value
                             .as_ref()
                             .and_then(|v| v.get("ids"))
@@ -501,6 +559,13 @@ impl StreamHandler<Result<ws::Message, ProtocolError>> for ChatSession {
                         }
                     }
                     Some("typing") => {
+                        if !crate::security_limits::allow(
+                            format!("ws-typing:{}", self.user_id),
+                            5,
+                            2.0,
+                        ) {
+                            return;
+                        }
                         match (
                             value
                                 .as_ref()
@@ -531,6 +596,14 @@ impl StreamHandler<Result<ws::Message, ProtocolError>> for ChatSession {
                         }
                     }
                     None | Some("message") => {
+                        if !crate::security_limits::allow(
+                            format!("ws-message:{}", self.user_id),
+                            10,
+                            1.0,
+                        ) {
+                            self.limited(ctx, &text);
+                            return;
+                        }
                         if let Ok(parsed) = serde_json::from_str::<OutgoingMessage>(&text) {
                             if !parsed.body.trim().is_empty()
                                 && parsed.body.len() <= 16000
@@ -588,6 +661,20 @@ impl Handler<ServerEvent> for ChatSession {
     type Result = ();
 
     fn handle(&mut self, msg: ServerEvent, ctx: &mut Self::Context) {
+        if matches!(msg, ServerEvent::Revalidate { .. }) {
+            if !crate::auth::session_valid(self.user_id, &self.login, self.auth_version) {
+                self.reject(ctx);
+            }
+            return;
+        }
+        if matches!(msg, ServerEvent::ConnectionLimit { .. }) {
+            ctx.close(Some(ws::CloseReason {
+                code: ws::CloseCode::Again,
+                description: Some("Too many open chats".into()),
+            }));
+            ctx.stop();
+            return;
+        }
         if matches!(msg, ServerEvent::SessionRevoked { .. }) {
             self.reject(ctx);
             return;
@@ -612,6 +699,7 @@ pub async fn chat_ws(
         heartbeat: std::time::Instant::now(),
         authenticated: false,
         user_id: 0,
+        auth_version: 0,
         last_typing: None,
         last_seen_write: None,
         db_pool: pool.get_ref().clone(),
@@ -622,6 +710,8 @@ pub async fn chat_ws(
 #[derive(Deserialize)]
 pub struct MessageQuery {
     companion: String,
+    before_id: Option<i32>,
+    limit: Option<i64>,
 }
 
 #[get("/messages")]
@@ -635,22 +725,33 @@ async fn get_my_messages(
         None => return HttpResponse::Unauthorized().body("Invalid or missing token"),
     };
 
+    let limit = query.limit.unwrap_or(1000);
+    if !(1..=1000).contains(&limit)
+        || query.before_id.is_some_and(|id| id <= 0)
+        || query.companion.len() > 256
+    {
+        return HttpResponse::BadRequest().body("Invalid history pagination");
+    }
     let my_login = claims.sub;
     let other_login = query.companion.clone();
+    let before_id = query.before_id;
 
     let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
 
     let query = r#"
        SELECT id, sender_login as sender, recipient_login as recipient, body, created_at, read, read_at, client_id
         FROM messages
-        WHERE (sender_login = $1 AND recipient_login = $2)
-           OR (sender_login = $2 AND recipient_login = $1)
-        ORDER BY id ASC
+        WHERE ((sender_login = $1 AND recipient_login = $2)
+           OR (sender_login = $2 AND recipient_login = $1))
+          AND ($3::integer IS NULL OR id < $3)
+        ORDER BY id DESC LIMIT $4
     "#;
 
-    let messages = match diesel::sql_query(query)
+    let mut messages = match diesel::sql_query(query)
         .bind::<Text, _>(&my_login)
         .bind::<Text, _>(&other_login)
+        .bind::<Nullable<Integer>, _>(before_id)
+        .bind::<BigInt, _>(limit)
         .load::<ClientMessage>(conn)
     {
         Ok(results) => results,
@@ -660,6 +761,7 @@ async fn get_my_messages(
         }
     };
 
+    messages.reverse();
     HttpResponse::Ok()
         .insert_header(("Cache-Control", "no-store"))
         .json(messages)

@@ -5,6 +5,27 @@ use actix_web::{HttpRequest, HttpResponse, web};
 use diesel::prelude::*;
 use diesel::sql_types::{Bool, Integer, Nullable, Text};
 
+fn editable_release(conn: &mut diesel::PgConnection, id: i32) -> Result<(), HttpResponse> {
+    #[derive(QueryableByName)]
+    struct Platform {
+        #[diesel(sql_type = Integer)]
+        platform: i32,
+    }
+    match diesel::sql_query("SELECT platform FROM releases WHERE id=$1")
+        .bind::<Integer, _>(id)
+        .get_result::<Platform>(conn)
+        .optional()
+    {
+        Ok(Some(row)) if [8, 9, 48, 167, 38].contains(&row.platform) => Ok(()),
+        Ok(Some(_)) => Err(HttpResponse::BadRequest().body("Unsupported platform")),
+        Ok(None) => Err(HttpResponse::NotFound().body("Release not found")),
+        Err(e) => {
+            log::error!("Release validation failed: {e}");
+            Err(HttpResponse::InternalServerError().finish())
+        }
+    }
+}
+
 #[post("/add_wts")]
 async fn add_wts(
     pool: web::Data<DBPool>,
@@ -23,6 +44,9 @@ async fn add_wts(
     let user_login = claims.sub;
 
     let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
+    if let Err(response) = editable_release(conn, data.release_id) {
+        return response;
+    }
 
     // Lock the owned release so adding a sale and removing ownership cannot race.
     let insert_query = r#"
@@ -107,13 +131,20 @@ async fn add_release(
         None => return HttpResponse::Unauthorized().body("Invalid or missing token"),
     };
 
+    if data.price.is_some_and(|price| price < 0) {
+        return HttpResponse::BadRequest().body("Purchase price must be non-negative");
+    }
+
     let user_login = claims.sub;
 
     let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
+    if let Err(response) = editable_release(conn, data.release_id) {
+        return response;
+    }
 
     let insert_query = r#"
         INSERT INTO users_have_releases (release_id, user_login, price, product_id)
-        VALUES ($1, $2, $3, $4)
+        SELECT id, $2, $3, product_id FROM releases WHERE id=$1
         ON CONFLICT DO NOTHING
     "#;
 
@@ -121,7 +152,6 @@ async fn add_release(
         .bind::<Integer, _>(data.release_id)
         .bind::<Text, _>(&user_login)
         .bind::<Nullable<Integer>, _>(data.price)
-        .bind::<Nullable<Integer>, _>(data.product_id)
         .execute(conn);
 
     match result {
@@ -147,6 +177,10 @@ async fn set_release_price(
         Some(c) => c,
         None => return HttpResponse::Unauthorized().body("Invalid or missing token"),
     };
+
+    if data.price.is_some_and(|price| price < 0) {
+        return HttpResponse::BadRequest().body("Purchase price must be non-negative");
+    }
 
     let user_login = claims.sub;
 
@@ -228,6 +262,9 @@ async fn add_wish(
     let user_login = claims.sub;
 
     let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
+    if let Err(response) = editable_release(conn, data.release_id) {
+        return response;
+    }
 
     let insert_query = r#"
         INSERT INTO users_have_wishes (release_id, user_login)

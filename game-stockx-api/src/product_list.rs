@@ -169,14 +169,19 @@ pub async fn list(
     if !matches!(company_role, "developer" | "publisher") {
         return HttpResponse::BadRequest().body("Invalid company role");
     }
-    let limit = query.limit.unwrap_or(100);
-    let offset = query.offset.unwrap_or(0);
+    let (limit, offset) = match crate::pagination::page_bounds(query.limit, query.offset, 1000) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
     let cat = query.cat;
     let search_mode = query.search_mode.as_deref().unwrap_or("name");
     if !matches!(search_mode, "name" | "serial") {
         return HttpResponse::BadRequest().body("Invalid search mode");
     }
     let mut text_query = query.query.clone().unwrap_or_default();
+    if text_query.chars().count() > 200 {
+        return HttpResponse::BadRequest().body("Search query too long");
+    }
     if search_mode == "serial" && !text_query.trim().is_empty() {
         text_query = match crate::serial_number::parse(&text_query) {
             Ok(value) => value,

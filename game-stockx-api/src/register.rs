@@ -1,5 +1,4 @@
 use crate::DBPool;
-use crate::constants::CONNECTION_POOL_ERROR;
 use actix_web::{HttpResponse, post, web};
 use diesel::prelude::*;
 use serde::Deserialize;
@@ -25,29 +24,42 @@ pub struct RegisterRequest {
 
 #[post("/register")]
 pub async fn register(pool: web::Data<DBPool>, data: web::Json<RegisterRequest>) -> HttpResponse {
-    if !data.user_login.chars().all(|c| c.is_ascii_alphanumeric()) {
+    if !crate::password_policy::valid_login(&data.user_login) {
         return HttpResponse::BadRequest().json(serde_json::json!({
-            "error": "Логин должен содержать только латинские буквы и цифры"
+            "error": "Логин: от 1 до 64 латинских букв и цифр"
         }));
     }
 
-    let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
-    let password_hash = hash_password(&data.password);
-
-    let query = r#"
-        INSERT INTO users (user_login, password_hash) VALUES ($1, $2)
-    "#;
-
-    let result = diesel::sql_query(query)
-        .bind::<diesel::sql_types::Text, _>(&data.user_login)
-        .bind::<diesel::sql_types::Text, _>(&password_hash)
-        .execute(conn);
-
+    if !crate::password_policy::valid_password(&data.password) {
+        return HttpResponse::BadRequest()
+            .json(serde_json::json!({"error":"Пароль должен содержать от 8 до 128 символов"}));
+    }
+    let Some(hash_slot) = crate::password_policy::hash_slot() else {
+        return HttpResponse::ServiceUnavailable()
+            .insert_header(("Retry-After", "1"))
+            .finish();
+    };
+    let result = web::block(move || -> Result<usize, diesel::result::Error> {
+        let _hash_slot = hash_slot;
+        let password_hash = hash_password(&data.password);
+        let mut conn = pool
+            .get()
+            .map_err(|_| diesel::result::Error::RollbackTransaction)?;
+        diesel::sql_query("INSERT INTO users(user_login,password_hash) VALUES($1,$2)")
+            .bind::<diesel::sql_types::Text, _>(&data.user_login)
+            .bind::<diesel::sql_types::Text, _>(password_hash)
+            .execute(&mut conn)
+    })
+    .await;
     match result {
-        Ok(_) => {
+        Ok(Ok(_)) => {
             SUCCESSFUL_REGISTRATIONS.inc();
             HttpResponse::Created().finish()
         }
-        Err(_) => HttpResponse::Conflict().body("User already exists"),
+        Ok(Err(diesel::result::Error::DatabaseError(
+            diesel::result::DatabaseErrorKind::UniqueViolation,
+            _,
+        ))) => HttpResponse::Conflict().body("User already exists"),
+        _ => HttpResponse::ServiceUnavailable().body("Registration temporarily unavailable"),
     }
 }

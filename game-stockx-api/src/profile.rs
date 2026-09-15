@@ -39,6 +39,7 @@ pub async fn change_password(
     pool: web::Data<DBPool>,
     req: HttpRequest,
     data: web::Json<PasswordChange>,
+    chat: web::Data<actix::Addr<crate::chat::ChatServer>>,
 ) -> HttpResponse {
     use actix_web::http::StatusCode as S;
     let Some(claims) = authenticated_claims(&req) else {
@@ -47,13 +48,21 @@ pub async fn change_password(
     if data.new_password != data.confirm_password {
         return error(S::BAD_REQUEST, "Новые пароли не совпадают");
     }
-    if !(8..=128).contains(&data.new_password.chars().count()) || data.old_password.len() > 4096 {
+    if !crate::password_policy::valid_password(&data.new_password) || data.old_password.len() > 4096
+    {
         return error(
             S::BAD_REQUEST,
             "Новый пароль должен содержать от 8 до 128 символов",
         );
     }
+    let login = claims.sub.clone();
+    let Some(hash_slot) = crate::password_policy::hash_slot() else {
+        return HttpResponse::ServiceUnavailable()
+            .insert_header(("Retry-After", "1"))
+            .finish();
+    };
     let result = web::block(move || -> Result<bool, String> {
+        let _hash_slot = hash_slot;
         let conn = &mut pool.get().map_err(|e| e.to_string())?;
         let user = diesel::sql_query("SELECT password_hash FROM users WHERE user_login = $1")
             .bind::<Text, _>(&claims.sub)
@@ -77,18 +86,23 @@ pub async fn change_password(
             .to_string();
         // Do not overwrite a password changed by a concurrent request.
         let count = diesel::sql_query(
-            "UPDATE users SET password_hash = $1 WHERE user_login = $2 AND password_hash = $3",
+            "UPDATE users SET password_hash = $1, auth_version = auth_version + 1 WHERE user_login = $2 AND password_hash = $3 AND id=$4 AND auth_version=$5",
         )
         .bind::<Text, _>(new_hash)
         .bind::<Text, _>(claims.sub)
         .bind::<Text, _>(user.password_hash)
+        .bind::<diesel::sql_types::Integer, _>(claims.uid)
+        .bind::<diesel::sql_types::BigInt, _>(claims.ver)
         .execute(conn)
         .map_err(|e| e.to_string())?;
         Ok(count == 1)
     })
     .await;
     match result {
-        Ok(Ok(true)) => HttpResponse::NoContent().finish(),
+        Ok(Ok(true)) => {
+            chat.do_send(crate::chat::ChatCommand::RevalidateUser { login });
+            HttpResponse::NoContent().finish()
+        }
         Ok(Ok(false)) => error(S::BAD_REQUEST, "Старый пароль неверен или уже изменён"),
         _ => error(S::INTERNAL_SERVER_ERROR, "Не удалось изменить пароль"),
     }

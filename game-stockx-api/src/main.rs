@@ -1,11 +1,13 @@
 mod catalog_serials;
 mod game_features;
+mod password_policy;
+mod security_limits;
 #[macro_use]
 extern crate actix_web;
 #[macro_use]
 extern crate prometheus;
 
-use dotenv::dotenv;
+use dotenvy::dotenv;
 use std::{env, io};
 
 use actix_cors::Cors;
@@ -81,7 +83,6 @@ async fn main() -> io::Result<()> {
     let rate_limiter = GovernorRateLimiter::per_ip_with_whitelist(
         20, // 20 запросов в секунду
         vec![
-            "/ws/",
             "/metrics",
             "/health",
             "/favicon.ico",

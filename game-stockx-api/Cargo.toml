@@ -2,42 +2,35 @@
 name = "game-stockx-api"
 version = "0.1.0"
 edition = "2024"
+rust-version = "1.91"
 
 [dependencies]
 actix = "0.13"
-governor = "0.6.0"
-actix-web = "4"
+actix-web = { version = "4", default-features = false, features = ["macros", "compress-brotli", "compress-gzip", "compress-zstd", "cookies", "unicode", "compat", "ws"] }
 async-trait = "0.1"
 tokio = { version = "1", features = ["full"] }
 actix-rt = "2.5.0"
 actix-web-actors = "4"
-diesel = { version = "2.1", features = ["postgres", "r2d2", "chrono", "uuid", "serde_json"] }
+diesel = { version = "2.3.10", features = ["postgres", "r2d2", "chrono", "uuid", "serde_json"] }
 r2d2 = "0.8.8"
-r2d2-diesel = "1.0.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-jsonwebtoken = "9"
+jsonwebtoken = { version = "10.3", default-features = false, features = ["rust_crypto"] }
 argon2 = "0.5"
 rand_core = "0.6"
-rand = "0.8"
 bb8 = "0.8"
 bb8-redis = "0.14"
 log = "0.4"
-env_logger = "0.9" # или другой логгер
+env_logger = "0.11"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.17.0", features = ["v4"] }
-prometheus = "0.13"
+prometheus = "0.14"
 lazy_static = "1.4"
 futures = "0.3"
 futures-util = "0.3"
-metrics = "0.20"
-metrics-exporter-prometheus = "0.10"
 
-dotenv = "0.15.0"
-bigdecimal = { version = "0.4", features = ["serde"]}
-num-traits = "0.2"
+dotenvy = "0.15.7"
 actix-cors = "0.7.1"
-actix-web-prom = "0.10.0"
 
 png = "0.17.16"
 image = { version = "=0.25.8", default-features = false, features = ["jpeg"] }

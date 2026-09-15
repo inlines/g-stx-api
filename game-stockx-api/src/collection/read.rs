@@ -81,7 +81,10 @@ async fn get_collection_stats(pool: web::Data<DBPool>, req: HttpRequest) -> Http
 
     match result {
         Ok(items) => HttpResponse::Ok().json(items),
-        Err(err) => HttpResponse::InternalServerError().body(format!("DB error: {:?}", err)),
+        Err(err) => {
+            log::error!("Collection query failed: {err}");
+            HttpResponse::InternalServerError().finish()
+        }
     }
 }
 
@@ -101,8 +104,10 @@ async fn get_collection(
 
     let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
     let cat = query.cat;
-    let limit = query.limit.unwrap_or(100);
-    let offset = query.offset.unwrap_or(0);
+    let (limit, offset) = match crate::pagination::page_bounds(query.limit, query.offset, 1000) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
 
     let query = r#"
         SELECT 
@@ -188,8 +193,10 @@ async fn get_collection_by_login(
     };
 
     //let cat = query.cat;
-    let limit = query.limit.unwrap_or(100).min(1000);
-    let offset = query.offset.unwrap_or(0);
+    let (limit, offset) = match crate::pagination::page_bounds(query.limit, query.offset, 1000) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
 
     let query_text = r#"
         SELECT 
@@ -232,7 +239,7 @@ async fn get_collection_by_login(
         Ok(items) => HttpResponse::Ok().json(items),
         Err(err) => {
             eprintln!("Query error: {:?}", err);
-            HttpResponse::InternalServerError().body(format!("DB error: {:?}", err))
+            HttpResponse::InternalServerError().finish()
         }
     }
 }
@@ -253,8 +260,10 @@ async fn get_wishlist(
 
     let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
     let cat = query.cat;
-    let limit = query.limit.unwrap_or(100);
-    let offset = query.offset.unwrap_or(0);
+    let (limit, offset) = match crate::pagination::page_bounds(query.limit, query.offset, 1000) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
 
     let query = r#"
         SELECT 
@@ -337,8 +346,10 @@ async fn get_wts(
 
     let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
     let cat = query.cat;
-    let limit = query.limit.unwrap_or(100);
-    let offset = query.offset.unwrap_or(0);
+    let (limit, offset) = match crate::pagination::page_bounds(query.limit, query.offset, 1000) {
+        Ok(v) => v,
+        Err(r) => return r,
+    };
 
     let query = r#"
         SELECT 
