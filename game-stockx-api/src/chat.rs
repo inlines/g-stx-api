@@ -773,6 +773,8 @@ pub struct DialogDto {
     pub companion: String,
     #[diesel(sql_type = Text)]
     pub last_message: String,
+    #[diesel(sql_type = Text)]
+    pub last_message_sender: String,
     #[diesel(sql_type = Timestamptz)]
     pub last_message_time: DateTime<Utc>,
 }
@@ -794,6 +796,7 @@ async fn get_my_dialogs(pool: web::Data<DBPool>, req: HttpRequest) -> HttpRespon
                 ELSE sender_login
             END AS companion,
             body AS last_message,
+            sender_login AS last_message_sender,
             created_at AS last_message_time
         FROM messages
         WHERE sender_login = $1 OR recipient_login = $1
