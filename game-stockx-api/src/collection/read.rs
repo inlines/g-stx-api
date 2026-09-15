@@ -1,6 +1,6 @@
 use super::models::*;
+use crate::DBPool;
 use crate::pagination::Pagination;
-use crate::{DBPool, constants::CONNECTION_POOL_ERROR};
 use actix_web::web::Path;
 use actix_web::{HttpRequest, HttpResponse, web};
 use diesel::prelude::*;
@@ -9,14 +9,12 @@ use diesel::sql_types::Text;
 #[get("/collection-stats")]
 async fn get_collection_stats(pool: web::Data<DBPool>, req: HttpRequest) -> HttpResponse {
     // Извлечение токена из заголовка
-    let claims = match crate::auth::authenticated_claims(&req) {
+    let claims = match crate::auth::authenticated_claims_async(&req).await {
         Some(c) => c,
         None => return HttpResponse::Unauthorized().body("Invalid or missing token"),
     };
 
     let user_login = claims.sub;
-
-    let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
 
     let query = r#"
         SELECT
@@ -75,9 +73,12 @@ async fn get_collection_stats(pool: web::Data<DBPool>, req: HttpRequest) -> Http
         ) s ON COALESCE(h.platform, w.platform) = s.platform;
     "#;
 
-    let result: Result<Vec<CollectionStats>, diesel::result::Error> = diesel::sql_query(query)
-        .bind::<Text, _>(&user_login)
-        .load::<CollectionStats>(conn);
+    let result = crate::admin::db(pool.clone(), move |conn| {
+        Ok(diesel::sql_query(query)
+            .bind::<Text, _>(&user_login)
+            .load::<CollectionStats>(conn)?)
+    })
+    .await;
 
     match result {
         Ok(items) => HttpResponse::Ok().json(items),
@@ -95,14 +96,13 @@ async fn get_collection(
     query: web::Query<Pagination>,
 ) -> HttpResponse {
     // Извлечение токена из заголовка
-    let claims = match crate::auth::authenticated_claims(&req) {
+    let claims = match crate::auth::authenticated_claims_async(&req).await {
         Some(c) => c,
         None => return HttpResponse::Unauthorized().body("Invalid or missing token"),
     };
 
     let user_login = claims.sub;
 
-    let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
     let cat = query.cat;
     let (limit, offset) = match crate::pagination::page_bounds(query.limit, query.offset, 1000) {
         Ok(v) => v,
@@ -140,24 +140,36 @@ async fn get_collection(
         "__RELEASE_DATES__",
         &crate::release_dates::map_sql("prod", "r.platform"),
     );
-    let result = diesel::sql_query(query)
-        .bind::<Text, _>(&user_login)
-        .bind::<diesel::sql_types::BigInt, _>(cat)
-        .bind::<diesel::sql_types::BigInt, _>(limit)
-        .bind::<diesel::sql_types::BigInt, _>(offset)
-        .load::<CollectionItem>(conn);
+    let db_result = crate::admin::db(pool.clone(), move |conn| {
+        let result = diesel::sql_query(query)
+            .bind::<Text, _>(&user_login)
+            .bind::<diesel::sql_types::BigInt, _>(cat)
+            .bind::<diesel::sql_types::BigInt, _>(limit)
+            .bind::<diesel::sql_types::BigInt, _>(offset)
+            .load::<CollectionItem>(conn);
 
-    let count_query = r#"
+        let count_query = r#"
         SELECT COUNT(*) as total FROM public.users_have_releases AS uhr
         INNER JOIN releases AS r ON uhr.release_id = r.id
         INNER JOIN platforms AS p ON r.platform = p.id
         WHERE uhr.user_login = $1 AND p.id = $2
     "#;
 
-    let count_result = diesel::sql_query(count_query)
-        .bind::<Text, _>(&user_login)
-        .bind::<diesel::sql_types::BigInt, _>(cat)
-        .load::<CountResult>(conn);
+        let count_result = diesel::sql_query(count_query)
+            .bind::<Text, _>(&user_login)
+            .bind::<diesel::sql_types::BigInt, _>(cat)
+            .load::<CountResult>(conn);
+
+        Ok((result, count_result))
+    })
+    .await;
+    let (result, count_result) = match db_result {
+        Ok(data) => data,
+        Err(error) => {
+            log::error!("Collection database operation failed: {error}");
+            return HttpResponse::InternalServerError().finish();
+        }
+    };
 
     match (result, count_result) {
         (Ok(items), Ok(count)) => {
@@ -185,12 +197,6 @@ async fn get_collection_by_login(
     if login.is_empty() {
         return HttpResponse::BadRequest().json("Login cannot be empty");
     }
-
-    // Изменяем на mut conn
-    let mut conn = match pool.get() {
-        Ok(conn) => conn,
-        Err(_) => return HttpResponse::InternalServerError().json("Database connection error"),
-    };
 
     //let cat = query.cat;
     let (limit, offset) = match crate::pagination::page_bounds(query.limit, query.offset, 1000) {
@@ -229,11 +235,14 @@ async fn get_collection_by_login(
         "__RELEASE_DATES__",
         &crate::release_dates::map_sql("prod", "r.platform"),
     );
-    let result = diesel::sql_query(query_text)
-        .bind::<Text, _>(&login)
-        .bind::<diesel::sql_types::BigInt, _>(limit)
-        .bind::<diesel::sql_types::BigInt, _>(offset)
-        .load::<CollectionItem>(&mut conn); // Используем &mut conn
+    let result = crate::admin::db(pool.clone(), move |conn| {
+        Ok(diesel::sql_query(query_text)
+            .bind::<Text, _>(&login)
+            .bind::<diesel::sql_types::BigInt, _>(limit)
+            .bind::<diesel::sql_types::BigInt, _>(offset)
+            .load::<CollectionItem>(conn)?)
+    })
+    .await;
 
     match result {
         Ok(items) => HttpResponse::Ok().json(items),
@@ -251,14 +260,13 @@ async fn get_wishlist(
     query: web::Query<Pagination>,
 ) -> HttpResponse {
     // Извлечение токена из заголовка
-    let claims = match crate::auth::authenticated_claims(&req) {
+    let claims = match crate::auth::authenticated_claims_async(&req).await {
         Some(c) => c,
         None => return HttpResponse::Unauthorized().body("Invalid or missing token"),
     };
 
     let user_login = claims.sub;
 
-    let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
     let cat = query.cat;
     let (limit, offset) = match crate::pagination::page_bounds(query.limit, query.offset, 1000) {
         Ok(v) => v,
@@ -296,24 +304,36 @@ async fn get_wishlist(
         "__RELEASE_DATES__",
         &crate::release_dates::map_sql("prod", "r.platform"),
     );
-    let result = diesel::sql_query(query)
-        .bind::<Text, _>(&user_login)
-        .bind::<diesel::sql_types::BigInt, _>(cat)
-        .bind::<diesel::sql_types::BigInt, _>(limit)
-        .bind::<diesel::sql_types::BigInt, _>(offset)
-        .load::<CollectionItem>(conn);
+    let db_result = crate::admin::db(pool.clone(), move |conn| {
+        let result = diesel::sql_query(query)
+            .bind::<Text, _>(&user_login)
+            .bind::<diesel::sql_types::BigInt, _>(cat)
+            .bind::<diesel::sql_types::BigInt, _>(limit)
+            .bind::<diesel::sql_types::BigInt, _>(offset)
+            .load::<CollectionItem>(conn);
 
-    let count_query = r#"
+        let count_query = r#"
         SELECT COUNT(*) as total FROM public.users_have_wishes AS uhw
         INNER JOIN releases AS r ON uhw.release_id = r.id
         INNER JOIN platforms AS p ON r.platform = p.id
         WHERE uhw.user_login = $1 AND p.id = $2
     "#;
 
-    let count_result = diesel::sql_query(count_query)
-        .bind::<Text, _>(&user_login)
-        .bind::<diesel::sql_types::BigInt, _>(cat)
-        .load::<CountResult>(conn);
+        let count_result = diesel::sql_query(count_query)
+            .bind::<Text, _>(&user_login)
+            .bind::<diesel::sql_types::BigInt, _>(cat)
+            .load::<CountResult>(conn);
+
+        Ok((result, count_result))
+    })
+    .await;
+    let (result, count_result) = match db_result {
+        Ok(data) => data,
+        Err(error) => {
+            log::error!("Collection database operation failed: {error}");
+            return HttpResponse::InternalServerError().finish();
+        }
+    };
 
     match (result, count_result) {
         (Ok(items), Ok(count)) => {
@@ -337,14 +357,13 @@ async fn get_wts(
     query: web::Query<Pagination>,
 ) -> HttpResponse {
     // Извлечение токена из заголовка
-    let claims = match crate::auth::authenticated_claims(&req) {
+    let claims = match crate::auth::authenticated_claims_async(&req).await {
         Some(c) => c,
         None => return HttpResponse::Unauthorized().body("Invalid or missing token"),
     };
 
     let user_login = claims.sub;
 
-    let conn = &mut pool.get().expect(CONNECTION_POOL_ERROR);
     let cat = query.cat;
     let (limit, offset) = match crate::pagination::page_bounds(query.limit, query.offset, 1000) {
         Ok(v) => v,
@@ -375,6 +394,7 @@ async fn get_wts(
         LIMIT $3 OFFSET $4
     "#;
 
+    let db_result = crate::admin::db(pool.clone(), move |conn| {
     let result = diesel::sql_query(query)
         .bind::<Text, _>(&user_login)
         .bind::<diesel::sql_types::BigInt, _>(cat)
@@ -394,6 +414,16 @@ async fn get_wts(
         .bind::<Text, _>(&user_login)
         .bind::<diesel::sql_types::BigInt, _>(cat)
         .load::<CountResult>(conn);
+
+        Ok((result, count_result))
+    }).await;
+    let (result, count_result) = match db_result {
+        Ok(data) => data,
+        Err(error) => {
+            log::error!("Collection database operation failed: {error}");
+            return HttpResponse::InternalServerError().finish();
+        }
+    };
 
     match (result, count_result) {
         (Ok(items), Ok(count)) => {

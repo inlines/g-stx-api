@@ -1,4 +1,3 @@
-use crate::auth::verify_jwt;
 use crate::pagination::Pagination;
 use crate::{
     DBPool,
@@ -150,7 +149,7 @@ pub async fn list(
     }
     let unknown = query.unknown.unwrap_or(false);
     if unknown {
-        let Some(claims) = crate::auth::authenticated_claims(&req) else {
+        let Some(claims) = crate::auth::authenticated_claims_async(&req).await else {
             return HttpResponse::Unauthorized().finish();
         };
         if let Err(error) = crate::admin::db(pool.clone(), move |conn| {
@@ -165,8 +164,12 @@ pub async fn list(
         Ok(regions) => regions,
         Err(()) => return HttpResponse::BadRequest().body("Invalid region group"),
     };
-    let company_role = query.company_role.as_deref().unwrap_or("developer");
-    if !matches!(company_role, "developer" | "publisher") {
+    let company_role = query
+        .company_role
+        .as_deref()
+        .unwrap_or("developer")
+        .to_owned();
+    if !matches!(company_role.as_str(), "developer" | "publisher") {
         return HttpResponse::BadRequest().body("Invalid company role");
     }
     let (limit, offset) = match crate::pagination::page_bounds(query.limit, query.offset, 1000) {
@@ -199,10 +202,9 @@ pub async fn list(
 
     if limit > 20 || offset > 20 {
         // Извлекаем токен из заголовка
-        let token = crate::auth::bearer_token(&req);
 
         // Проверяем JWT токен
-        let _claims = match token.and_then(verify_jwt) {
+        let _claims = match crate::auth::authenticated_claims_async(&req).await {
             Some(c) => c,
             None => {
                 return HttpResponse::Unauthorized()
@@ -244,14 +246,6 @@ pub async fn list(
     {
         return HttpResponse::Ok().json(cached);
     }
-
-    let conn = &mut match pool.get() {
-        Ok(conn) => conn,
-        Err(e) => {
-            eprintln!("Database connection error: {}", e);
-            return HttpResponse::InternalServerError().finish();
-        }
-    };
 
     let db_text_query = if serial_search {
         text_query.clone()
@@ -332,22 +326,6 @@ pub async fn list(
         order_column, order_direction, nulls_order
     );
 
-    let results = diesel::sql_query(sql)
-        .bind::<diesel::sql_types::BigInt, _>(limit)
-        .bind::<diesel::sql_types::BigInt, _>(offset)
-        .bind::<diesel::sql_types::Text, _>(db_text_query.clone())
-        .bind::<diesel::sql_types::BigInt, _>(cat)
-        .bind::<diesel::sql_types::Bool, _>(ignore_digital)
-        .bind::<Nullable<Integer>, _>(query.franchise_id)
-        .bind::<Nullable<Integer>, _>(query.company_id)
-        .bind::<Text, _>(company_role)
-        .bind::<Bool, _>(query.local_multiplayer.unwrap_or(false))
-        .bind::<Bool, _>(query.online_multiplayer.unwrap_or(false))
-        .bind::<Bool, _>(include_unreleased)
-        .bind::<Array<Text>, _>(&regions)
-        .bind::<Nullable<Integer>, _>(query.genre_id)
-        .load::<ProductListItem>(conn);
-
     let count_filter = features_filter
         .replace("$9", "$7")
         .replace("$10", "$8")
@@ -398,19 +376,48 @@ pub async fn list(
     "#
     );
 
-    let count_result = diesel::sql_query(count_sql)
-        .bind::<diesel::sql_types::BigInt, _>(cat)
-        .bind::<diesel::sql_types::Text, _>(db_text_query)
-        .bind::<diesel::sql_types::Bool, _>(ignore_digital)
-        .bind::<Nullable<Integer>, _>(query.franchise_id)
-        .bind::<Nullable<Integer>, _>(query.company_id)
-        .bind::<Text, _>(company_role)
-        .bind::<Bool, _>(query.local_multiplayer.unwrap_or(false))
-        .bind::<Bool, _>(query.online_multiplayer.unwrap_or(false))
-        .bind::<Bool, _>(include_unreleased)
-        .bind::<Array<Text>, _>(&regions)
-        .bind::<Nullable<Integer>, _>(query.genre_id)
-        .load::<CountResult>(conn);
+    // Keep the connection inside blocking SQL work; Redis is awaited only after it is returned.
+    let db_result = crate::admin::db(pool.clone(), move |conn| {
+        let results = diesel::sql_query(sql)
+            .bind::<diesel::sql_types::BigInt, _>(limit)
+            .bind::<diesel::sql_types::BigInt, _>(offset)
+            .bind::<diesel::sql_types::Text, _>(db_text_query.clone())
+            .bind::<diesel::sql_types::BigInt, _>(cat)
+            .bind::<diesel::sql_types::Bool, _>(ignore_digital)
+            .bind::<Nullable<Integer>, _>(query.franchise_id)
+            .bind::<Nullable<Integer>, _>(query.company_id)
+            .bind::<Text, _>(&company_role)
+            .bind::<Bool, _>(query.local_multiplayer.unwrap_or(false))
+            .bind::<Bool, _>(query.online_multiplayer.unwrap_or(false))
+            .bind::<Bool, _>(include_unreleased)
+            .bind::<Array<Text>, _>(&regions)
+            .bind::<Nullable<Integer>, _>(query.genre_id)
+            .load::<ProductListItem>(conn);
+
+        let count_result = diesel::sql_query(count_sql)
+            .bind::<diesel::sql_types::BigInt, _>(cat)
+            .bind::<diesel::sql_types::Text, _>(db_text_query)
+            .bind::<diesel::sql_types::Bool, _>(ignore_digital)
+            .bind::<Nullable<Integer>, _>(query.franchise_id)
+            .bind::<Nullable<Integer>, _>(query.company_id)
+            .bind::<Text, _>(&company_role)
+            .bind::<Bool, _>(query.local_multiplayer.unwrap_or(false))
+            .bind::<Bool, _>(query.online_multiplayer.unwrap_or(false))
+            .bind::<Bool, _>(include_unreleased)
+            .bind::<Array<Text>, _>(&regions)
+            .bind::<Nullable<Integer>, _>(query.genre_id)
+            .load::<CountResult>(conn);
+
+        Ok((results, count_result))
+    })
+    .await;
+    let (results, count_result) = match db_result {
+        Ok(data) => data,
+        Err(error) => {
+            log::error!("Catalog database operation failed: {error}");
+            return HttpResponse::InternalServerError().finish();
+        }
+    };
 
     match (results, count_result) {
         (Ok(items), Ok(count)) => {

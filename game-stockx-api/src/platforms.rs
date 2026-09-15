@@ -36,11 +36,6 @@ pub struct PlatformItem {
 }
 
 async fn load_from_db(pool: &Data<DBPool>) -> Result<Vec<PlatformItem>, HttpResponse> {
-    let conn = &mut pool.get().map_err(|e| {
-        log::error!("Failed to get DB connection: {}", e);
-        HttpResponse::InternalServerError().finish()
-    })?;
-
     let query = r#"
         WITH counts AS (
             SELECT r.platform,
@@ -67,12 +62,14 @@ async fn load_from_db(pool: &Data<DBPool>) -> Result<Vec<PlatformItem>, HttpResp
         ORDER BY p.name ASC
     "#;
 
-    diesel::sql_query(query)
-        .load::<PlatformItem>(conn)
-        .map_err(|e| {
-            log::error!("DB error: {}", e);
-            HttpResponse::InternalServerError().finish()
-        })
+    crate::admin::db(pool.clone(), move |conn| {
+        Ok(diesel::sql_query(query).load::<PlatformItem>(conn)?)
+    })
+    .await
+    .map_err(|e| {
+        log::error!("DB error: {}", e);
+        HttpResponse::InternalServerError().finish()
+    })
 }
 
 #[get("/platforms")]

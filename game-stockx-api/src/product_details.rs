@@ -1,4 +1,4 @@
-use crate::auth::verify_jwt;
+use crate::auth::verify_jwt_async;
 use crate::{
     DBPool,
     redis::{self, Cache, RedisPool, Versions},
@@ -134,11 +134,12 @@ fn build_product_franschises_cache_key(product_id: i32) -> String {
 }
 
 // Функция для извлечения и проверки токена
-fn extract_and_verify_token(req: &HttpRequest) -> Result<String, HttpResponse> {
+async fn extract_and_verify_token(req: &HttpRequest) -> Result<String, HttpResponse> {
     let token = crate::auth::bearer_token(req);
 
     match token {
-        Some(t) => verify_jwt(t)
+        Some(t) => verify_jwt_async(t)
+            .await
             .map(|claims| claims.sub)
             .ok_or_else(|| HttpResponse::Unauthorized().body("Invalid or expired token")),
         None => {
@@ -157,7 +158,7 @@ pub async fn get(
     let product_id = path.into_inner();
 
     // Пытаемся получить и верифицировать токен
-    let user_login_result = extract_and_verify_token(&req);
+    let user_login_result = extract_and_verify_token(&req).await;
 
     let user_login_opt = match user_login_result {
         Ok(login) => Some(login),
@@ -251,8 +252,6 @@ async fn get_product_basic_info(
         return Ok(Some(cached));
     }
 
-    let conn = &mut pool.get().map_err(|e| e.to_string())?;
-
     let query = r#"
     SELECT 
             prod.id AS id,
@@ -274,11 +273,14 @@ async fn get_product_basic_info(
         GROUP BY prod.id, prod.name, prod.summary, prod.first_release_date, cov.id;
     "#;
 
-    let product_info = diesel::sql_query(query)
-        .bind::<Integer, _>(product_id)
-        .get_result::<ProductProperties>(conn)
-        .optional()
-        .map_err(|e| e.to_string())?;
+    let product_info = crate::admin::db(pool.clone(), move |conn| {
+        Ok(diesel::sql_query(query)
+            .bind::<Integer, _>(product_id)
+            .get_result::<ProductProperties>(conn)
+            .optional()?)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
 
     if let Some(ref product_info) = product_info {
         redis::write(redis_pool, Cache::Basic, &cache_key, product_info, 86400).await;
@@ -290,8 +292,6 @@ async fn get_product_releases(
     pool: &Data<DBPool>,
     product_id: i32,
 ) -> Result<(Vec<ProductReleaseInfo>, Vec<String>), String> {
-    let conn = &mut pool.get().map_err(|e| e.to_string())?;
-
     let releases_query = r#"
         SELECT
             r.id AS release_id,
@@ -319,26 +319,28 @@ async fn get_product_releases(
         ORDER BY p.name
     "#;
 
-    let releases: Vec<ProductReleaseInfo> = diesel::sql_query(releases_query)
-        .bind::<Integer, _>(product_id)
-        .load(conn)
-        .map_err(|e| e.to_string())?;
+    crate::admin::db(pool.clone(), move |conn| {
+        let releases: Vec<ProductReleaseInfo> = diesel::sql_query(releases_query)
+            .bind::<Integer, _>(product_id)
+            .load(conn)?;
 
-    let screenshots_query = r#"
+        let screenshots_query = r#"
         SELECT image_url
         FROM screenshots
         WHERE game = $1
     "#;
 
-    let screenshots: Vec<String> = diesel::sql_query(screenshots_query)
-        .bind::<Integer, _>(product_id)
-        .load::<ScreenshotUrl>(conn)
-        .map_err(|e| e.to_string())?
-        .into_iter()
-        .map(|s| s.image_url)
-        .collect();
+        let screenshots: Vec<String> = diesel::sql_query(screenshots_query)
+            .bind::<Integer, _>(product_id)
+            .load::<ScreenshotUrl>(conn)?
+            .into_iter()
+            .map(|s| s.image_url)
+            .collect();
 
-    Ok((releases, screenshots))
+        Ok((releases, screenshots))
+    })
+    .await
+    .map_err(|e| e.to_string())
 }
 
 async fn get_product_companies(
@@ -358,8 +360,6 @@ async fn get_product_companies(
         return Ok(cached);
     }
 
-    let conn = &mut pool.get().map_err(|e| e.to_string())?;
-
     let query = r#"
         SELECT 
             ic.id, 
@@ -375,10 +375,13 @@ async fn get_product_companies(
         WHERE ic.game = $1
     "#;
 
-    let product_companies = diesel::sql_query(query)
-        .bind::<Integer, _>(product_id)
-        .load::<Company>(conn)
-        .map_err(|e| e.to_string())?;
+    let product_companies = crate::admin::db(pool.clone(), move |conn| {
+        Ok(diesel::sql_query(query)
+            .bind::<Integer, _>(product_id)
+            .load::<Company>(conn)?)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
 
     redis::write(
         redis_pool,
@@ -408,8 +411,6 @@ async fn get_product_franschises(
         return Ok(cached);
     }
 
-    let conn = &mut pool.get().map_err(|e| e.to_string())?;
-
     let query = r#"
         SELECT *
         FROM (
@@ -424,10 +425,13 @@ async fn get_product_franschises(
         WHERE product_id = $1
     "#;
 
-    let product_franschise = diesel::sql_query(query)
-        .bind::<Integer, _>(product_id)
-        .load::<Franschise>(conn)
-        .map_err(|e| e.to_string())?;
+    let product_franschise = crate::admin::db(pool.clone(), move |conn| {
+        Ok(diesel::sql_query(query)
+            .bind::<Integer, _>(product_id)
+            .load::<Franschise>(conn)?)
+    })
+    .await
+    .map_err(|e| e.to_string())?;
 
     redis::write(
         redis_pool,

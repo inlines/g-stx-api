@@ -127,6 +127,16 @@ pub fn verify_jwt(token: &str) -> Option<Claims> {
     session_valid(claims.uid, &claims.sub, claims.ver).then_some(claims)
 }
 
+// JWT session checks also use PostgreSQL, so HTTP handlers must not run them on Actix workers.
+pub async fn verify_jwt_async(token: &str) -> Option<Claims> {
+    let token = token.to_owned();
+    web::block(move || verify_jwt(&token)).await.ok().flatten()
+}
+
+pub(crate) async fn authenticated_claims_async(req: &HttpRequest) -> Option<Claims> {
+    verify_jwt_async(bearer_token(req)?).await
+}
+
 fn verify_password(password: &str, hash: &str) -> bool {
     let Ok(parsed_hash) = PasswordHash::new(hash) else {
         return false;
