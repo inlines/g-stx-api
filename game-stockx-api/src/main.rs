@@ -24,6 +24,7 @@ mod collectors;
 mod companies;
 mod constants;
 mod franchises;
+mod genres;
 mod kudos;
 mod metrics;
 mod metrics_middleware;
@@ -117,6 +118,7 @@ async fn main() -> io::Result<()> {
                 web::scope("/api")
                     .service(product_list::list)
                     .service(franchises::get_franchise)
+                    .service(genres::list)
                     .service(companies::get_company)
                     .service(product_details::get)
                     .service(register::register)

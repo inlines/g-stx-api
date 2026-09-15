@@ -145,6 +145,9 @@ pub async fn list(
     query: web::Query<Pagination>,
     req: HttpRequest,
 ) -> HttpResponse {
+    if query.genre_id.is_some_and(|id| id <= 0) {
+        return HttpResponse::BadRequest().body("Invalid genre_id");
+    }
     let unknown = query.unknown.unwrap_or(false);
     if unknown {
         let Some(claims) = crate::auth::authenticated_claims(&req) else {
@@ -204,7 +207,10 @@ pub async fn list(
     }
 
     let mut cache_key = build_cache_key(cat, limit, offset, &text_query, ignore_digital, &sort);
-    cache_key.push_str(&format!(":search_{search_mode}:unknown_{unknown}"));
+    cache_key.push_str(&format!(
+        ":search_{search_mode}:unknown_{unknown}:genre_{:?}",
+        query.genre_id
+    ));
     cache_key.push_str(&format!(":unreleased_{include_unreleased}"));
     cache_key.push_str(&format!(":regions_{}", regions.join(",")));
     if let Some(id) = query.franchise_id {
@@ -314,6 +320,7 @@ pub async fn list(
         {region_filter}
         {unknown_filter}
         {features_filter}
+        AND ($13::integer IS NULL OR EXISTS (SELECT 1 FROM product_genres pg WHERE pg.product_id=p.id AND pg.genre_id=$13))
         ORDER BY {} {} {}, p.id ASC
         LIMIT $1 OFFSET $2
         "#,
@@ -333,6 +340,7 @@ pub async fn list(
         .bind::<Bool, _>(query.online_multiplayer.unwrap_or(false))
         .bind::<Bool, _>(include_unreleased)
         .bind::<Array<Text>, _>(&regions)
+        .bind::<Nullable<Integer>, _>(query.genre_id)
         .load::<ProductListItem>(conn);
 
     let count_filter = features_filter
@@ -381,6 +389,7 @@ pub async fn list(
         {visibility}
         {unknown_filter}
         {count_filter}
+        AND ($11::integer IS NULL OR EXISTS (SELECT 1 FROM product_genres pg WHERE pg.product_id=p.id AND pg.genre_id=$11))
     "#
     );
 
@@ -395,6 +404,7 @@ pub async fn list(
         .bind::<Bool, _>(query.online_multiplayer.unwrap_or(false))
         .bind::<Bool, _>(include_unreleased)
         .bind::<Array<Text>, _>(&regions)
+        .bind::<Nullable<Integer>, _>(query.genre_id)
         .load::<CountResult>(conn);
 
     match (results, count_result) {

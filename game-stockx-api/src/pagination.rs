@@ -5,6 +5,7 @@ pub struct Pagination {
     pub limit: Option<i64>,
     pub offset: Option<i64>,
     pub unknown: Option<bool>,
+    pub genre_id: Option<i32>,
     pub regions: Option<String>,
     pub query: Option<String>,
     pub search_mode: Option<String>,

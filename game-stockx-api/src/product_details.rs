@@ -111,6 +111,7 @@ struct ScreenshotUrl {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProductResponse {
+    genres: Vec<crate::genres::Genre>,
     pub product: ProductProperties,
     pub multiplayer: Vec<crate::game_features::MultiplayerMode>,
     pub similar_games: Vec<crate::game_features::SimilarGame>,
@@ -216,7 +217,12 @@ pub async fn get(
             Ok(features) => features,
             Err(_) => return HttpResponse::InternalServerError().finish(),
         };
+    let genres = match crate::genres::load(pool.clone(), Some(product_id)).await {
+        Ok(genres) => genres,
+        Err(_) => return HttpResponse::InternalServerError().finish(),
+    };
     HttpResponse::Ok().json(ProductResponse {
+        genres,
         multiplayer,
         similar_games,
         product: basic_info,
