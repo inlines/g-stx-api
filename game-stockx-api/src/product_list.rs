@@ -68,6 +68,14 @@ pub struct CountResult {
     pub japan: i64,
     #[diesel(sql_type = BigInt)]
     pub other: i64,
+    #[diesel(sql_type = BigInt)]
+    pub europe_total: i64,
+    #[diesel(sql_type = BigInt)]
+    pub america_total: i64,
+    #[diesel(sql_type = BigInt)]
+    pub japan_total: i64,
+    #[diesel(sql_type = BigInt)]
+    pub other_total: i64,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -75,6 +83,8 @@ pub struct ProductListResponse {
     items: Vec<ProductListItem>,
     total_count: i64,
     region_counts: Option<std::collections::BTreeMap<String, i64>>,
+    #[serde(default)]
+    region_totals: Option<std::collections::BTreeMap<String, i64>>,
 }
 
 fn build_cache_key(
@@ -87,7 +97,7 @@ fn build_cache_key(
 ) -> String {
     // JSON encoding keeps delimiters in user-supplied search strings unambiguous.
     format!(
-        "cache:v16:catalog:regions:{}",
+        "cache:v17:catalog:regional-unknown:{}",
         serde_json::json!([cat, limit, offset, query, ignore_digital, sort])
     )
 }
@@ -122,6 +132,21 @@ fn build_region_filter(platform: &str, regions: &str) -> String {
         WHERE region_release.product_id=p.id AND region_release.platform={platform}
         AND (region_release.release_region=8 OR (CASE region_release.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=ANY({regions}))
     )) ")
+}
+
+// A game is Unknown when at least one requested UI region has no selected code.
+// Use the card's exact-region/Worldwide precedence, never a foreign-region code.
+fn regional_unknown(platform: &str, regions: &str) -> String {
+    let scope = "ARRAY[unknown_region.region]::text[]";
+    let present = build_region_filter(platform, scope);
+    // Existence only: do not normalize, sort and allocate full serial arrays per count.
+    // format_release_serials preserves whether an entry is nonblank.
+    let codes = format!(
+        "EXISTS (SELECT 1 FROM releases code_release WHERE code_release.product_id=p.id AND code_release.platform={platform} AND EXISTS(SELECT 1 FROM unnest(code_release.serial) sn WHERE btrim(sn)<>'') AND ((CASE code_release.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=unknown_region.region OR (code_release.release_region=8 AND NOT EXISTS(SELECT 1 FROM releases exact WHERE exact.product_id=p.id AND exact.platform={platform} AND (CASE exact.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=unknown_region.region))))"
+    );
+    format!(
+        "EXISTS (SELECT 1 FROM unnest(CASE WHEN cardinality({regions}::text[])=0 THEN ARRAY['europe','america','japan','other']::text[] ELSE {regions}::text[] END) unknown_region(region) WHERE true {present} AND NOT {codes})"
+    )
 }
 
 fn search_filter(serial: bool, platform: &str, text: &str, regions: &str) -> String {
@@ -273,12 +298,13 @@ pub async fn list(
     let region_filter = build_region_filter("$4", "$12");
     let serials = serials_exist("$4");
     let unknown_filter = if unknown {
-        format!("AND NOT {serials}")
+        format!("AND {}", regional_unknown("$4", "$12"))
     } else {
         String::new()
     };
     let search_predicate = search_filter(serial_search, "$4", "$3", "$12");
     let selected_serials = crate::catalog_serials::selected_sql("$4", "$12");
+    let has_serials = if unknown { "false".to_owned() } else { serials };
     let dates = crate::release_dates::map_sql("p", "$4");
     let selected_date = crate::release_dates::selected_sql("release_dates.dates", "$12");
     let sql = format!(
@@ -286,7 +312,7 @@ pub async fn list(
         SELECT 
             p.id AS id,
             p.name AS name,
-            {serials} AS has_serials,
+            {has_serials} AS has_serials,
             {selected_serials} AS serial,
             EXISTS(SELECT 1 FROM product_platforms pp WHERE pp.product_id=p.id AND pp.platform_id=$4 AND pp.digital_only) AS digital_only,
             p.first_release_date AS first_release_date,
@@ -338,24 +364,26 @@ pub async fn list(
     let visibility = visibility_filter("$9", "$1");
     let region_filter = build_region_filter("$1", "$10");
     let unknown_filter = if unknown {
-        format!("AND NOT {}", serials_exist("$1"))
+        format!("AND {}", regional_unknown("$1", "$10"))
     } else {
         String::new()
     };
     let regional_columns = ["europe", "america", "japan", "other"]
         .map(|region| {
             if unknown {
-                let predicate = build_region_filter("$1", &format!("ARRAY['{region}']::text[]"));
-                format!("COUNT(DISTINCT p.id) FILTER (WHERE true {predicate}) AS {region}")
+                let scope = format!("ARRAY['{region}']::text[]");
+                let present = build_region_filter("$1", &scope);
+                let missing = regional_unknown("$1", &scope);
+                format!("COUNT(DISTINCT p.id) FILTER (WHERE {missing}) AS {region}, COUNT(DISTINCT p.id) FILTER (WHERE true {present}) AS {region}_total")
             } else {
-                format!("0::bigint AS {region}")
+                format!("0::bigint AS {region}, 0::bigint AS {region}_total")
             }
         })
         .join(", ");
     let search_predicate = search_filter(serial_search, "$1", "$2", "$10");
     let count_sql = format!(
         r#"
-        SELECT COUNT(DISTINCT p.id) FILTER (WHERE true {region_filter}) as total, {regional_columns}
+        SELECT COUNT(DISTINCT p.id) FILTER (WHERE true {region_filter} {unknown_filter}) as total, {regional_columns}
         FROM products p
         WHERE EXISTS (
             SELECT 1 
@@ -375,7 +403,6 @@ pub async fn list(
               AND (($6 = 'developer' AND ic.developer = true) OR ($6 = 'publisher' AND ic.publisher = true))
         ))
         {visibility}
-        {unknown_filter}
         {count_filter}
         AND ($11::integer IS NULL OR EXISTS (SELECT 1 FROM product_genres pg WHERE pg.product_id=p.id AND pg.genre_id=$11))
     "#
@@ -429,6 +456,21 @@ pub async fn list(
             let response = ProductListResponse {
                 items,
                 total_count: count.first().map(|c| c.total).unwrap_or(0),
+                region_totals: if unknown {
+                    count.first().map(|c| {
+                        [
+                            ("europe", c.europe_total),
+                            ("america", c.america_total),
+                            ("japan", c.japan_total),
+                            ("other", c.other_total),
+                        ]
+                        .into_iter()
+                        .map(|(k, v)| (k.to_owned(), v))
+                        .collect()
+                    })
+                } else {
+                    None
+                },
                 region_counts: if unknown {
                     count.first().map(|c| {
                         [

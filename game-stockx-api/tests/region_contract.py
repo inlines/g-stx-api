@@ -39,13 +39,17 @@ def exercise(request, sql, admin_request, nonadmin_request):
     assert all(not p['digital_only'] for p in unknown['items'])
     for region in ['europe','america','japan','other']:
         assert unknown['region_counts'][region] == admin_request(unknown_url+'&regions='+region)['total_count']
+        assert unknown['region_totals'][region] == catalog(region)['total_count']
+        assert unknown['region_counts'][region] <= unknown['region_totals'][region]
     searched=admin_request(unknown_url+'&query=Region%20game%20301')
     assert searched['region_counts'] == {'europe':0,'america':0,'japan':0,'other':1}
     assert all(not p['has_serials'] for p in unknown['items'])
-    assert {p['id'] for p in unknown['items'] if p['id']>=300}=={301,302,303,305}
+    assert {p['id'] for p in unknown['items'] if p['id']>=300}=={300,301,302,303,305}
     assert unknown['total_count']==len(unknown['items'])
     assert [p['id'] for p in admin_request(unknown_url+'&regions=japan')['items']]==[303,305]
-    assert admin_request(unknown_url+'&regions=america')['total_count']==1
+    assert admin_request(unknown_url+'&regions=america')['total_count']==2
+    assert 300 in {p['id'] for p in admin_request(unknown_url+'&regions=america')['items']}
+    assert 300 not in {p['id'] for p in admin_request(unknown_url+'&regions=europe')['items']}
     assert admin_request(unknown_url+'&query=Region%20game%20301')['total_count']==1
     # Authorization is also enforced on a warmed cache.
     nonadmin_request(unknown_url,status=403)

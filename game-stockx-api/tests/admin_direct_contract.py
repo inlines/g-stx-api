@@ -11,7 +11,8 @@ def exercise(request, sql, admin, ordinary):
     request('/api/admin/releases/999999/serials',admin,data={'serial':'CUSA-00987'},status=404)
     request('/api/admin/products/999999/alternative-names',admin,data={'name':'Alias'},status=404)
     sql("INSERT INTO platforms(id,name) VALUES(7,'PS1'); INSERT INTO releases(id,product_id,platform,release_region) VALUES(900,1,7,1);")
-    request('/api/admin/releases/900/serials',admin,data={'serial':'SLUS-00111'},status=400)
+    # PS1 is now supported: its valid disc serial is accepted.
+    request('/api/admin/releases/900/serials',admin,data={'serial':'SLUS-00111'},status=204)
     # Cache the game and empty alias search before changing either field.
     request('/api/products/1',admin)
     request('/api/products?cat=48&limit=15&offset=0&query=DirectAlias',admin)

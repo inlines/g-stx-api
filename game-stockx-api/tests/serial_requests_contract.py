@@ -36,7 +36,7 @@ def exercise(base, admin, uploader, sql):
     submit(token=None, status=401)
     submit(token='bad', status=401)
     submit(release=6, status=400)
-    submit(release=8, status=400)  # PS1 must not accept serial requests.
+    submit(release=8, serial='invalid', status=400)  # PS1 is supported; malformed serials still fail.
     submit(release=999999, status=404)
     submit(serial='<script>', status=400)
     submit(serial='cusa00123', status=409)

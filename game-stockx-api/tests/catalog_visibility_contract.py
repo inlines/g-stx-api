@@ -87,7 +87,8 @@ def exercise(request, sql):
         assert page['total_count'] == all_visible['total_count']
         assert page['items'] == all_visible['items'][1:2]
     assert ids(unknown='true') == {209, 210, 216}
-    assert ids(unknown='true', include_unreleased='true') == {201, 203, 205, 209, 210, 211, 213, 215, 216}
+    # Regional Unknown needs a release on this platform, even with unreleased enabled.
+    assert ids(unknown='true', include_unreleased='true') == {205, 209, 210, 211, 213, 215, 216}
     for include in ['false', 'true']:
         unknown = catalog(unknown='true', include_unreleased=include)
         assert unknown['total_count'] == len(unknown['items'])
