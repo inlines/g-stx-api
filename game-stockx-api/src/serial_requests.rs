@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::io::Cursor;
 
 const PHOTO_LIMIT: usize = 768 * 1024;
-const PLATFORMS: [i32; 5] = [8, 9, 48, 167, 38]; // PS2, PS3, PS4, PS5, PSP (IGDB).
+use crate::constants::COLLECTIBLE_PLATFORMS as PLATFORMS;
 
 fn normalize_serial(value: &str) -> Result<String, AdminError> {
     crate::serial_number::parse(value)
@@ -156,7 +156,7 @@ fn release(conn: &mut PgConnection, id: i32) -> Result<Release, AdminError> {
         .ok_or(AdminError::Missing("Релиз не найден"))?;
     if !PLATFORMS.contains(&row.platform) {
         return Err(AdminError::Invalid(
-            "Заявки доступны только для PS2, PS3, PS4, PS5 и PSP",
+            "Заявки доступны только для PS1, PS2, PS3, PS4, PS5 и PSP",
         ));
     }
     Ok(row)
@@ -497,10 +497,11 @@ mod tests {
         assert!(normalize_name("bad\0name").is_err());
     }
     #[actix_web::test]
-    async fn supports_ps2_but_not_ps1() {
+    async fn supports_ps1_and_ps2_but_not_inactive_consoles() {
         assert!(PLATFORMS.contains(&8));
-        assert!(!PLATFORMS.contains(&7));
-        assert_eq!(PLATFORMS, [8, 9, 48, 167, 38]);
+        assert!(PLATFORMS.contains(&7));
+        assert!(!PLATFORMS.contains(&46));
+        assert_eq!(PLATFORMS, [7, 8, 9, 48, 167, 38]);
     }
     #[actix_web::test]
     async fn serial_normalization_preserves_separators() {

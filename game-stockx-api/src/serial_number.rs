@@ -4,8 +4,9 @@ use std::sync::LazyLock;
 static BASE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^([A-Z]{4})-?([0-9]{5})(.*)$").unwrap());
 static VALID: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r"^[A-Z]{4}-[0-9]{5}(?:[A-Z]{1,4}|(?:[-/][A-Z0-9]{1,8}){1,3})?$").unwrap()
+    Regex::new(r"^(?:[A-Z]{4}-[0-9]{5}(?:[A-Z]{1,4}|(?:[-/][A-Z0-9]{1,8}){1,3})?|LSP-[0-9]{6})$").unwrap()
 });
+static LIGHTSPAN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"^LSP-?([0-9]{6})$").unwrap());
 pub const FORMAT_ERROR: &str =
     "Формат: CUSA-12345 (можно без дефиса). Допустим суффикс, например /ANZ или GH.";
 
@@ -19,7 +20,8 @@ pub fn canonical(value: &str) -> String {
         })
         .collect::<String>()
         .to_ascii_uppercase();
-    BASE.replace(&compact, "$1-$2$3").into_owned()
+    let formatted = BASE.replace(&compact, "$1-$2$3");
+    LIGHTSPAN.replace(&formatted, "LSP-$1").into_owned()
 }
 pub fn parse(value: &str) -> Result<String, ()> {
     let value = canonical(value);
@@ -37,6 +39,7 @@ mod tests {
         for raw in ["cusa12345", " CUSA 12345 ", "CUSA–12345"] {
             assert_eq!(parse(raw), Ok("CUSA-12345".into()));
         }
+        assert_eq!(parse("lsp990121"), Ok("LSP-990121".into()));
         for raw in ["SCES-54330/ANZ", "SLUS-20144GH", "SLPM-65002-0"] {
             assert_eq!(parse(raw).unwrap(), raw);
         }

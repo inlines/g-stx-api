@@ -16,7 +16,7 @@ fn editable_release(conn: &mut diesel::PgConnection, id: i32) -> Result<(), Http
         .get_result::<Platform>(conn)
         .optional()
     {
-        Ok(Some(row)) if [8, 9, 48, 167, 38].contains(&row.platform) => Ok(()),
+        Ok(Some(row)) if crate::constants::COLLECTIBLE_PLATFORMS.contains(&row.platform) => Ok(()),
         Ok(Some(_)) => Err(HttpResponse::BadRequest().body("Unsupported platform")),
         Ok(None) => Err(HttpResponse::NotFound().body("Release not found")),
         Err(e) => {

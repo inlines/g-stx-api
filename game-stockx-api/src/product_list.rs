@@ -87,7 +87,7 @@ fn build_cache_key(
 ) -> String {
     // JSON encoding keeps delimiters in user-supplied search strings unambiguous.
     format!(
-        "cache:v15:catalog:regions:{}",
+        "cache:v16:catalog:regions:{}",
         serde_json::json!([cat, limit, offset, query, ignore_digital, sort])
     )
 }
@@ -105,7 +105,12 @@ fn visibility_filter(unreleased: &str, platform: &str) -> String {
               AND available.release_status IS DISTINCT FROM 5
               AND available.release_date IS NOT NULL
         ))
-        AND (p.game_type NOT IN (1, 2, 4, 13, 6, 5) OR p.game_type IS NULL)
+        AND (p.game_type NOT IN (1, 2, 4, 13, 6, 5) OR p.game_type IS NULL
+             OR ({platform}=7 AND p.game_type IN (2,4) AND EXISTS (
+                 SELECT 1 FROM releases physical WHERE physical.product_id=p.id
+                   AND physical.platform=7 AND NOT physical.digital_only
+                   AND EXISTS (SELECT 1 FROM unnest(physical.serial) sn WHERE btrim(sn) <> '')
+             )))
     "#
     )
 }
