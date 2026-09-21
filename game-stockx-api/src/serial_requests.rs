@@ -156,7 +156,7 @@ fn release(conn: &mut PgConnection, id: i32) -> Result<Release, AdminError> {
         .ok_or(AdminError::Missing("Релиз не найден"))?;
     if !PLATFORMS.contains(&row.platform) {
         return Err(AdminError::Invalid(
-            "Заявки доступны только для PS1, PS2, PS3, PS4, PS5 и PSP",
+            "Заявки доступны только для Saturn, PS1, PS2, PS3, PS4, PS5 и PSP",
         ));
     }
     Ok(row)
@@ -501,7 +501,7 @@ mod tests {
         assert!(PLATFORMS.contains(&8));
         assert!(PLATFORMS.contains(&7));
         assert!(!PLATFORMS.contains(&46));
-        assert_eq!(PLATFORMS, [7, 8, 9, 48, 167, 38]);
+        assert_eq!(PLATFORMS, [32, 7, 8, 9, 48, 167, 38]);
     }
     #[actix_web::test]
     async fn serial_normalization_preserves_separators() {

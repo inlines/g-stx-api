@@ -59,7 +59,7 @@ async fn load_from_db(pool: &Data<DBPool>) -> Result<Vec<PlatformItem>, HttpResp
             COALESCE(c.other_games,0) AS other_games
         FROM public.platforms p LEFT JOIN counts c ON c.platform=p.id
         WHERE p.active = true
-        ORDER BY p.name ASC
+        ORDER BY (p.id = 32) DESC, p.name ASC
     "#;
 
     crate::admin::db(pool.clone(), move |conn| {
