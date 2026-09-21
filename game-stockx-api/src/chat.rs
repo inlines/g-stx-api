@@ -771,6 +771,8 @@ async fn get_my_messages(
 pub struct DialogDto {
     #[diesel(sql_type = Text)]
     pub companion: String,
+    #[diesel(sql_type = Bool)]
+    pub has_avatar: bool,
     #[diesel(sql_type = Text)]
     pub last_message: String,
     #[diesel(sql_type = Text)]
@@ -795,6 +797,9 @@ async fn get_my_dialogs(pool: web::Data<DBPool>, req: HttpRequest) -> HttpRespon
                 WHEN sender_login = $1 THEN recipient_login
                 ELSE sender_login
             END AS companion,
+            EXISTS (SELECT 1 FROM users u
+                WHERE u.user_login = CASE WHEN sender_login = $1 THEN recipient_login ELSE sender_login END
+                  AND u.avatar IS NOT NULL) AS has_avatar,
             body AS last_message,
             sender_login AS last_message_sender,
             created_at AS last_message_time
