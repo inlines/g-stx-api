@@ -145,6 +145,8 @@ async fn main() -> io::Result<()> {
                     .service(profile::admin_badges)
                     .service(collection::add_release)
                     .service(collection::set_release_price)
+                    .service(collection::set_copy)
+                    .service(collection::get_library)
                     .service(collection::remove_release)
                     .service(collection::add_wish)
                     .service(collection::remove_wish)

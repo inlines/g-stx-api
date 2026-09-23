@@ -9,3 +9,8 @@ pub(crate) use mutations::{
 pub(crate) use read::{
     get_collection, get_collection_by_login, get_collection_stats, get_wishlist, get_wts,
 };
+
+mod copy;
+mod library;
+pub(crate) use copy::set_copy;
+pub(crate) use library::get_library;

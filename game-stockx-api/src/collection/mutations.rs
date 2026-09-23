@@ -54,6 +54,9 @@ async fn add_wts(
             SELECT release_id, user_login FROM users_have_releases
             WHERE release_id = $1 AND user_login = $2
             FOR UPDATE
+        ), copy_updated AS (
+            UPDATE users_have_releases o SET cib=$5 FROM owned c
+            WHERE o.release_id=c.release_id AND o.user_login=c.user_login AND $5::boolean IS NOT NULL
         ), inserted AS (
             INSERT INTO users_have_wts (release_id, user_login, price, cib)
             SELECT release_id, user_login, $3, $4 FROM owned
@@ -69,6 +72,7 @@ async fn add_wts(
         .bind::<Text, _>(&user_login)
         .bind::<Nullable<Integer>, _>(data.price)
         .bind::<Bool, _>(data.cib.unwrap_or(false))
+        .bind::<Nullable<Bool>, _>(data.cib)
         .get_result::<CountResult>(conn);
 
     match result {
