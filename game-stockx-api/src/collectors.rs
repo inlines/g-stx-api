@@ -92,7 +92,7 @@ async fn get_collector_wts(
     let query = r#"
         SELECT sale.release_id, r.release_date, p.name AS platform_name,
             prod.id AS product_id, prod.name AS product_name,
-            '//89.104.66.193/static/covers-thumb/' || cover.id || '.jpg' AS image_url,
+            '//89.104.66.193/static/covers-full/' || cover.id || '.jpg' AS image_url,
             reg.name AS region_name, ARRAY[]::text[] AS serial,
             sale.price, COALESCE(sale.cib, false) AS cib
         FROM users_have_wts sale

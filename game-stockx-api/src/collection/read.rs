@@ -123,7 +123,7 @@ async fn get_collection(
             prod.id as product_id,
             prod.name AS product_name,
             ARRAY(SELECT a.name FROM alternative_names a WHERE a.product_id=prod.id AND a.name IS NOT NULL ORDER BY a.name) AS alternative_names,
-            '//89.104.66.193/static/covers-thumb/' || cover.id ||'.jpg' AS image_url,
+            '//89.104.66.193/static/covers-full/' || cover.id ||'.jpg' AS image_url,
             reg.name AS region_name
         FROM public.users_have_releases AS uhr
         INNER JOIN releases AS r ON uhr.release_id = r.id
@@ -217,7 +217,7 @@ async fn get_collection_by_login(
             prod.id as product_id,
             prod.name AS product_name,
             ARRAY(SELECT a.name FROM alternative_names a WHERE a.product_id=prod.id AND a.name IS NOT NULL ORDER BY a.name) AS alternative_names,
-            '//89.104.66.193/static/covers-thumb/' || cover.id ||'.jpg' AS image_url,
+            '//89.104.66.193/static/covers-full/' || cover.id ||'.jpg' AS image_url,
             reg.name AS region_name,
             null AS price
         FROM public.users_have_releases AS uhr
@@ -285,7 +285,7 @@ async fn get_wishlist(
             prod.id as product_id,
             prod.name AS product_name,
             ARRAY(SELECT a.name FROM alternative_names a WHERE a.product_id=prod.id AND a.name IS NOT NULL ORDER BY a.name) AS alternative_names,
-            '//89.104.66.193/static/covers-thumb/' || cover.id ||'.jpg' AS image_url,
+            '//89.104.66.193/static/covers-full/' || cover.id ||'.jpg' AS image_url,
             reg.name AS region_name,
             ARRAY[]::text[] AS serial,
             null as price
@@ -377,7 +377,7 @@ async fn get_wts(
             p.name as platform_name,
             prod.id as product_id,
             prod.name AS product_name,
-            '//89.104.66.193/static/covers-thumb/' || cover.id ||'.jpg' AS image_url,
+            '//89.104.66.193/static/covers-full/' || cover.id ||'.jpg' AS image_url,
             reg.name AS region_name,
             ARRAY[]::text[] AS serial,
             uhwts.price,

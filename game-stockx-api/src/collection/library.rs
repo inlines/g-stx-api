@@ -111,7 +111,7 @@ SELECT jsonb_build_object(
  'platform_ids',COALESCE((SELECT jsonb_agg(id ORDER BY id) FROM (SELECT DISTINCT platform_id id FROM base) ids),'[]'),
  'owned_regions',(SELECT jsonb_object_agg(g,(SELECT count(DISTINCT product_id) FROM platform_items b WHERE NOT b.digital_only AND (b.region_group=g OR b.region_id=8))) FROM unnest(ARRAY['europe','america','japan','other']) g),
  'items',COALESCE((SELECT jsonb_agg(to_jsonb(b) || jsonb_build_object(
- 'image_url',CASE WHEN cover_id IS NOT NULL THEN '//89.104.66.193/static/covers-thumb/'||cover_id||'.jpg' END,
+ 'image_url',CASE WHEN cover_id IS NOT NULL THEN '//89.104.66.193/static/covers-full/'||cover_id||'.jpg' END,
  'local_players',mp.local_players,'online_players',mp.online_players,'local_multiplayer',mp.local_multiplayer,'online_multiplayer',mp.online_multiplayer) ORDER BY CASE WHEN $6='date' THEN release_date END ASC NULLS LAST, CASE WHEN $6='price' THEN price END ASC NULLS LAST, CASE WHEN $6='rating' THEN total_rating END DESC NULLS LAST, lower(product_name),release_id)
  FROM page b LEFT JOIN LATERAL (SELECT NULLIF(MAX(GREATEST(m.offlinemax,m.offlinecoopmax)),0) local_players,
  NULLIF(MAX(GREATEST(m.onlinemax,m.onlinecoopmax)),0) online_players,
