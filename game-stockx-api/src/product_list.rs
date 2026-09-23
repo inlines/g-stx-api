@@ -1,13 +1,13 @@
 use crate::pagination::Pagination;
 use crate::{
-    DBPool,
     redis::{self, Cache, RedisPool},
+    DBPool,
 };
 use actix_web::web::{self, Data};
 use actix_web::{HttpRequest, HttpResponse, ResponseError};
-use diesel::RunQueryDsl;
 use diesel::prelude::*;
 use diesel::sql_types::{Array, BigInt, Bool, Double, Integer, Nullable, Text};
+use diesel::RunQueryDsl;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize, QueryableByName)]
@@ -97,7 +97,7 @@ fn build_cache_key(
 ) -> String {
     // JSON encoding keeps delimiters in user-supplied search strings unambiguous.
     format!(
-        "cache:v17:catalog:regional-unknown:{}",
+        "cache:v18:catalog:regional-unknown:{}",
         serde_json::json!([cat, limit, offset, query, ignore_digital, sort])
     )
 }
@@ -134,15 +134,21 @@ fn build_region_filter(platform: &str, regions: &str) -> String {
     )) ")
 }
 
+// Exact regional releases take precedence even when all are digital-only.
+// Worldwide is a fallback only when no exact release exists.
+fn physical_region_filter(platform: &str, regions: &str) -> String {
+    format!(" AND EXISTS (SELECT 1 FROM unnest(CASE WHEN cardinality({regions}::text[])=0 THEN ARRAY['europe','america','japan','other']::text[] ELSE {regions}::text[] END) selected_region(region) JOIN releases physical_region ON physical_region.product_id=p.id AND physical_region.platform={platform} AND NOT physical_region.digital_only WHERE (CASE physical_region.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=selected_region.region OR (physical_region.release_region=8 AND NOT EXISTS(SELECT 1 FROM releases exact WHERE exact.product_id=p.id AND exact.platform={platform} AND (CASE exact.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=selected_region.region))) ")
+}
+
 // A game is Unknown when at least one requested UI region has no selected code.
 // Use the card's exact-region/Worldwide precedence, never a foreign-region code.
 fn regional_unknown(platform: &str, regions: &str) -> String {
     let scope = "ARRAY[unknown_region.region]::text[]";
-    let present = build_region_filter(platform, scope);
+    let present = physical_region_filter(platform, scope);
     // Existence only: do not normalize, sort and allocate full serial arrays per count.
     // format_release_serials preserves whether an entry is nonblank.
     let codes = format!(
-        "EXISTS (SELECT 1 FROM releases code_release WHERE code_release.product_id=p.id AND code_release.platform={platform} AND EXISTS(SELECT 1 FROM unnest(code_release.serial) sn WHERE btrim(sn)<>'') AND ((CASE code_release.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=unknown_region.region OR (code_release.release_region=8 AND NOT EXISTS(SELECT 1 FROM releases exact WHERE exact.product_id=p.id AND exact.platform={platform} AND (CASE exact.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=unknown_region.region))))"
+        "EXISTS (SELECT 1 FROM releases code_release WHERE code_release.product_id=p.id AND code_release.platform={platform} AND NOT code_release.digital_only AND EXISTS(SELECT 1 FROM unnest(code_release.serial) sn WHERE btrim(sn)<>'') AND ((CASE code_release.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=unknown_region.region OR (code_release.release_region=8 AND NOT EXISTS(SELECT 1 FROM releases exact WHERE exact.product_id=p.id AND exact.platform={platform} AND (CASE exact.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=unknown_region.region))))"
     );
     format!(
         "EXISTS (SELECT 1 FROM unnest(CASE WHEN cardinality({regions}::text[])=0 THEN ARRAY['europe','america','japan','other']::text[] ELSE {regions}::text[] END) unknown_region(region) WHERE true {present} AND NOT {codes})"
@@ -372,7 +378,7 @@ pub async fn list(
         .map(|region| {
             if unknown {
                 let scope = format!("ARRAY['{region}']::text[]");
-                let present = build_region_filter("$1", &scope);
+                let present = physical_region_filter("$1", &scope);
                 let missing = regional_unknown("$1", &scope);
                 format!("COUNT(DISTINCT p.id) FILTER (WHERE {missing}) AS {region}, COUNT(DISTINCT p.id) FILTER (WHERE true {present}) AS {region}_total")
             } else {
