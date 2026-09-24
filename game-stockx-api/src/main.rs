@@ -32,6 +32,7 @@ mod metrics;
 mod metrics_middleware;
 mod pagination;
 mod platforms;
+mod release_calendar;
 mod product_details;
 mod product_list;
 mod profile;
@@ -160,6 +161,7 @@ async fn main() -> io::Result<()> {
                     .service(collectors::get_collectors)
                     .service(collectors::get_collector_wts)
                     .service(platforms::get_platforms)
+                    .service(release_calendar::get_calendar)
                     .service(chat::get_my_messages)
                     .service(chat::get_unread)
                     .service(chat::get_my_dialogs),
