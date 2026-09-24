@@ -19,6 +19,7 @@ def exercise(request, sql, admin, ordinary):
     request(serial,admin,data={'serial':' cusa00987 '},status=204)
     request(serial,admin,data={'serial':'CUSA-00987'},status=409)
     assert sql('SELECT serial[1] FROM releases WHERE id=1')=='CUSA-00987'
+    sql("INSERT INTO alternative_names(id,product_id,name) VALUES(-20001,1,'Imported fixture'); SELECT setval('local_alternative_name_id',-20001,false);")
     request(names,admin,data={'name':'  DirectAlias   日本語  '},status=204)
     request(names,admin,data={'name':'directalias 日本語'},status=409)
     request(names,admin,data={'name':'Fixture'},status=409)
@@ -32,5 +33,5 @@ def exercise(request, sql, admin, ordinary):
     assert sql('SELECT revision FROM catalog_cache_revision')==revision
     assert sql("SELECT count(*) FROM releases WHERE 'CUSA-90001'=ANY(serial)")=='0'
     assert sql('SELECT (SELECT count(*) FROM release_serial_requests),(SELECT count(*) FROM kudos_awards)')==before
-    sql("DELETE FROM releases WHERE id=900; DELETE FROM platforms WHERE id=7; DELETE FROM alternative_names WHERE name='DirectAlias 日本語'; UPDATE releases SET serial=NULL WHERE id=1; UPDATE products SET cache_revision=cache_revision+1 WHERE id=1; UPDATE catalog_name_revision SET revision=revision+1; UPDATE catalog_cache_revision SET revision=revision+1;")
+    sql("DELETE FROM releases WHERE id=900; DELETE FROM platforms WHERE id=7; DELETE FROM alternative_names WHERE name IN ('DirectAlias 日本語','Imported fixture'); UPDATE releases SET serial=NULL WHERE id=1; UPDATE products SET cache_revision=cache_revision+1 WHERE id=1; UPDATE catalog_name_revision SET revision=revision+1; UPDATE catalog_cache_revision SET revision=revision+1;")
     print('PASS: direct admin changes, auth/role/console restrictions, duplicates, normalized Unicode, cache freshness, rollback, no requests/photos/Kudos')

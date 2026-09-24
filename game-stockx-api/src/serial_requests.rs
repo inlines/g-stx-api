@@ -72,6 +72,15 @@ fn lock_product(conn: &mut PgConnection, id: i32) -> Result<(), AdminError> {
         .ok_or(AdminError::Missing("Игра не найдена"))?;
     Ok(())
 }
+// Imports may insert negative IDs without advancing the local sequence.
+// Ignore only primary-key collisions; other database errors still abort the transaction.
+fn insert_name(conn: &mut PgConnection, product_id: i32, name: &str, comment: &str) -> Result<(), AdminError> {
+    loop {
+        let inserted = diesel::sql_query("INSERT INTO alternative_names(id,product_id,name,comment) VALUES(nextval('local_alternative_name_id'),$1,$2,$3) ON CONFLICT (id) DO NOTHING")
+            .bind::<Integer,_>(product_id).bind::<Text,_>(name).bind::<Text,_>(comment).execute(conn)?;
+        if inserted == 1 { return Ok(()); }
+    }
+}
 fn name_exists(conn: &mut PgConnection, id: i32, value: &str) -> Result<bool, AdminError> {
     Ok(diesel::sql_query("SELECT count(*) AS total FROM alternative_names WHERE product_id=$1 AND lower(btrim(name))=lower($2)")
         .bind::<Integer,_>(id).bind::<Text,_>(value).get_result::<Count>(conn)?.total > 0 ||
@@ -363,8 +372,7 @@ async fn accept(
             let product_id = item.product_id.ok_or(AdminError::Internal)?;
             lock_product(conn, product_id)?;
             if name_exists(conn, product_id, &serial)? { return Err(AdminError::Conflict("Это название уже указано у игры. Исправьте или отклоните заявку")); }
-            diesel::sql_query("INSERT INTO alternative_names(id,product_id,name,comment) VALUES(nextval('local_alternative_name_id'),$1,$2,'Community contribution')")
-                .bind::<Integer,_>(product_id).bind::<Text,_>(&serial).execute(conn)?;
+            insert_name(conn, product_id, &serial, "Community contribution")?;
             diesel::sql_query("UPDATE catalog_name_revision SET revision=revision+1 WHERE id=1").execute(conn)?;
             diesel::sql_query("UPDATE products SET cache_revision=cache_revision+1 WHERE id=$1").bind::<Integer,_>(product_id).execute(conn)?;
         } else {
@@ -402,8 +410,7 @@ async fn add_direct(
         if is_name {
             lock_product(conn, id)?;
             if name_exists(conn, id, &value)? { return Err(AdminError::Conflict("Это название уже указано у игры")); }
-            diesel::sql_query("INSERT INTO alternative_names(id,product_id,name,comment) VALUES(nextval('local_alternative_name_id'),$1,$2,'Administrator contribution')")
-                .bind::<Integer,_>(id).bind::<Text,_>(&value).execute(conn)?;
+            insert_name(conn, id, &value, "Administrator contribution")?;
             diesel::sql_query("UPDATE catalog_name_revision SET revision=revision+1 WHERE id=1").execute(conn)?;
             diesel::sql_query("UPDATE products SET cache_revision=cache_revision+1 WHERE id=$1").bind::<Integer,_>(id).execute(conn)?;
         } else {
