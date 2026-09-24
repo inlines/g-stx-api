@@ -49,11 +49,11 @@ pub(crate) async fn set_copy(
     let Some(claims) = crate::auth::authenticated_claims_async(&req).await else {
         return HttpResponse::Unauthorized().finish();
     };
-    if data.release_id <= 0
-        || data
-            .selected_serial
-            .as_ref()
-            .is_some_and(|s| s.trim().is_empty() || s.len() > 128)
+    // Locally curated releases use negative IDs; existence and ownership are checked in SQL.
+    if data
+        .selected_serial
+        .as_ref()
+        .is_some_and(|s| s.trim().is_empty() || s.len() > 128)
     {
         return HttpResponse::BadRequest().body("Invalid serial");
     }

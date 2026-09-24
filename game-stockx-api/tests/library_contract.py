@@ -89,6 +89,29 @@ try:
   req('/library/wishlist?login=bob',status=400)
   req('/library/collection?limit=0',status=400)
   req('/library/collection?sort=invalid',status=400)
+  # Negative IDs are first-class releases, including imported regional splits.
+  sql("INSERT INTO releases(id,product_id,platform,release_region,release_date,serial) VALUES(-90001,2,48,1,1002,ARRAY['CUSA-NEG001']);")
+  req('/add_release',{'release_id':-90001})
+  req('/set_release_price',{'release_id':-90001,'price':123})
+  req('/collection-copy',{'release_id':-90001,'selected_serial':'cusa neg001','cib':True})
+  assert sql("SELECT selected_serial||':'||cib::text||':'||price::text FROM users_have_releases WHERE release_id=-90001 AND user_login='alice'")=='CUSA-NEG001:true:123'
+  req('/collection-copy',{'release_id':-90001,'selected_serial':'WRONG','cib':False},status=400)
+  req('/collection-copy',{'release_id':-90002,'selected_serial':None,'cib':True},status=404)
+  req('/add_wish',{'release_id':-90001})
+  req('/add_wts',{'release_id':-90001,'price':456,'cib':True})
+  for kind in ['collection','wishlist','wts']:
+   assert any(i['release_id']==-90001 for i in req('/library/'+kind+'?query=Game%20002')['items'])
+  req('/collection-copy',{'release_id':-90001,'selected_serial':None,'cib':False})
+  assert sql("SELECT cib FROM users_have_wts WHERE release_id=-90001 AND user_login='alice'")=='f'
+  alice_token=token
+  token=req('/login',{'user_login':'bob','password':'testpassword'},False)['token']
+  req('/collection-copy',{'release_id':-90001,'selected_serial':None,'cib':True},status=404)
+  token=alice_token
+  req('/remove_wts',{'release_id':-90001})
+  req('/remove_wish',{'release_id':-90001})
+  req('/remove_release',{'release_id':-90001})
+  assert sql("SELECT count(*) FROM users_have_releases WHERE release_id=-90001")=='0'
+  print('PASS: negative release IDs across copy details, collection, prices, wishlist, WTS and ownership checks')
   token=req('/login',{'user_login':'bob','password':'testpassword'},False)['token']
   req('/collection-copy',{'release_id':2,'selected_serial':'CUSA-00002','cib':True},status=404)
   print('PASS: migration/backfill, pagination/order/counts, global search/filters, exact serial membership, CIB tri-state, isolated ownership, purchase/sale prices, public privacy and legacy WTS compatibility')
