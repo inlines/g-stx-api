@@ -36,6 +36,8 @@ pub struct ProductProperties {
 
 #[derive(Debug, Clone, Serialize, Deserialize, QueryableByName)]
 pub struct ProductReleaseInfo {
+    #[diesel(sql_type = Nullable<Integer>)]
+    pub game_type: Option<i32>,
     #[diesel(sql_type = Integer)]
     pub release_id: i32,
 
@@ -295,6 +297,7 @@ async fn get_product_releases(
     let releases_query = r#"
         SELECT
             r.id AS release_id,
+            effective_game_type(r.product_id, r.platform, (SELECT game_type FROM products WHERE id=r.product_id)) AS game_type,
             r.release_date AS release_date,
             reg.name AS release_region,
             p.name AS platform_name,

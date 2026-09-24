@@ -97,7 +97,7 @@ fn build_cache_key(
 ) -> String {
     // JSON encoding keeps delimiters in user-supplied search strings unambiguous.
     format!(
-        "cache:v18:catalog:regional-unknown:{}",
+        "cache:v19:catalog:regional-unknown:{}",
         serde_json::json!([cat, limit, offset, query, ignore_digital, sort])
     )
 }
@@ -115,8 +115,8 @@ fn visibility_filter(unreleased: &str, platform: &str) -> String {
               AND available.release_status IS DISTINCT FROM 5
               AND available.release_date IS NOT NULL
         ))
-        AND (p.game_type NOT IN (1, 2, 4, 13, 6, 5) OR p.game_type IS NULL
-             OR ({platform}=7 AND p.game_type IN (2,4) AND EXISTS (
+        AND (effective_game_type(p.id, {platform}, p.game_type) NOT IN (1, 2, 4, 13, 6, 5, 14) OR effective_game_type(p.id, {platform}, p.game_type) IS NULL
+             OR ({platform}=7 AND effective_game_type(p.id, {platform}, p.game_type) IN (2,4) AND EXISTS (
                  SELECT 1 FROM releases physical WHERE physical.product_id=p.id
                    AND physical.platform=7 AND NOT physical.digital_only
                    AND EXISTS (SELECT 1 FROM unnest(physical.serial) sn WHERE btrim(sn) <> '')
@@ -329,7 +329,7 @@ pub async fn list(
             (SELECT NULLIF(MAX(GREATEST(m.onlinemax,m.onlinecoopmax)),0) FROM product_multiplayer_modes m WHERE m.game=p.id AND m.platform=$4) AS online_players,
             EXISTS(SELECT 1 FROM product_multiplayer_modes m WHERE m.game=p.id AND m.platform=$4 AND {local}) AS local_multiplayer,
             EXISTS(SELECT 1 FROM product_multiplayer_modes m WHERE m.game=p.id AND m.platform=$4 AND {online}) AS online_multiplayer,
-            p.game_type,
+            effective_game_type(p.id, $4, p.game_type) AS game_type,
             p.parent_game,
             '//89.104.66.193/static/covers-full/' || c.id || '.jpg' AS image_url
         FROM products p
