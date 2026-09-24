@@ -67,6 +67,10 @@ try:
   assert digital['items'][0]['digital_only'] is True
   assert digital['owned_regions']['europe']==50
   sql("UPDATE product_platforms SET digital_only=false WHERE product_id=1 AND platform_id=48")
+  sql("UPDATE releases SET release_status=5 WHERE id=2; UPDATE releases SET release_date=NULL WHERE id=3; UPDATE releases SET release_date=2100000000 WHERE id=4; UPDATE products SET game_type=5 WHERE id=5")
+  assert req('/library/collection?cat=48')['owned_regions']['europe']==47
+  assert req('/library/collection?login=alice&cat=48')['owned_regions']['europe']==47
+  sql("UPDATE releases SET release_status=NULL,release_date=1000+id WHERE id IN(2,3,4); UPDATE products SET game_type=0 WHERE id=5")
   req('/collection-copy',{'release_id':1,'selected_serial':'cusa00101','cib':False})
   for kind in ['collection','wts']:
    row=req(f'/library/{kind}?query=Game%20001')['items'][0]

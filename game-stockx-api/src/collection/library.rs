@@ -83,6 +83,10 @@ pub(crate) async fn get_library(
 WITH base AS MATERIALIZED (
  SELECT r.id release_id, r.product_id, r.platform platform_id, r.release_region region_id, r.release_date,
  COALESCE(r.serial,ARRAY[]::text[]) serial,
+ (r.release_status IS DISTINCT FROM 5 AND r.release_date <= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)
+ AND (effective_game_type(p.id,r.platform,p.game_type) NOT IN (1,2,4,13,6,5,14)
+ OR effective_game_type(p.id,r.platform,p.game_type) IS NULL
+ OR (r.platform=7 AND effective_game_type(p.id,r.platform,p.game_type) IN (2,4) AND EXISTS(SELECT 1 FROM unnest(r.serial) s WHERE btrim(s)<>'')))) countable_box,
  (r.digital_only OR EXISTS(SELECT 1 FROM product_platforms pp WHERE pp.product_id=r.product_id AND pp.platform_id=r.platform AND pp.digital_only)) digital_only,
  p.name product_name, p.cover_id, p.total_rating,
  plat.name platform_name, reg.name region_name,
@@ -109,7 +113,7 @@ filtered AS MATERIALIZED (
 SELECT jsonb_build_object(
  'total_count',(SELECT count(*) FROM filtered), 'unfiltered_total',(SELECT count(*) FROM platform_items),
  'platform_ids',COALESCE((SELECT jsonb_agg(id ORDER BY id) FROM (SELECT DISTINCT platform_id id FROM base) ids),'[]'),
- 'owned_regions',(SELECT jsonb_object_agg(g,(SELECT count(DISTINCT product_id) FROM platform_items b WHERE NOT b.digital_only AND (b.region_group=g OR b.region_id=8))) FROM unnest(ARRAY['europe','america','japan','other']) g),
+ 'owned_regions',(SELECT jsonb_object_agg(g,(SELECT count(DISTINCT product_id) FROM platform_items b WHERE NOT b.digital_only AND b.countable_box AND (b.region_group=g OR (b.region_id=8 AND NOT EXISTS(SELECT 1 FROM releases exact WHERE exact.product_id=b.product_id AND exact.platform=b.platform_id AND (CASE exact.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=g))))) FROM unnest(ARRAY['europe','america','japan','other']) g),
  'items',COALESCE((SELECT jsonb_agg(to_jsonb(b) || jsonb_build_object(
  'image_url',CASE WHEN cover_id IS NOT NULL THEN '//89.104.66.193/static/covers-full/'||cover_id||'.jpg' END,
  'local_players',mp.local_players,'online_players',mp.online_players,'local_multiplayer',mp.local_multiplayer,'online_multiplayer',mp.online_multiplayer) ORDER BY CASE WHEN $6='date' THEN release_date END ASC NULLS LAST, CASE WHEN $6='price' THEN price END ASC NULLS LAST, CASE WHEN $6='rating' THEN total_rating END DESC NULLS LAST, lower(product_name),release_id)

@@ -4,7 +4,7 @@ from urllib.parse import urlencode
 
 def exercise(request, sql):
     sql("""
-      INSERT INTO platforms(id,name) VALUES(167,'PS5') ON CONFLICT DO NOTHING;
+      INSERT INTO platforms(id,name,abbreviation) VALUES(167,'PS5','PS5') ON CONFLICT DO NOTHING;
       INSERT INTO products(id,name,summary,first_release_date,game_type,parent_game) VALUES
         (200,'Visibility disc','',1500000000,3,NULL),
         (201,'Visibility unknown','',1500000000,0,NULL),
@@ -18,6 +18,7 @@ def exercise(request, sql):
         (209,'Visibility 100%_game','',1500000000,0,NULL),
         (210,'Visibility platform date only','',NULL,0,NULL),
         (211,'Visibility Super Mario War analogue','',1500000000,0,NULL),
+        (212,'Visibility future','',2100000000,0,NULL),
         (213,'Visibility Cancelled planned date','',1500000000,0,NULL),
         (214,'Visibility Cancelled serial','',1500000000,0,NULL),
         (215,'Visibility Cancelled PS4 released PS5','',1500000000,0,NULL),
@@ -45,7 +46,9 @@ def exercise(request, sql):
         (215,215,48,1,1500000000,5,NULL),
         (216,215,167,1,1500000000,6,NULL),
         (217,216,48,1,1400000000,5,NULL),
-        (218,216,48,1,1500000000,6,NULL);
+        (218,216,48,1,1500000000,6,NULL),
+        (219,212,48,1,2100000000,6,NULL),
+        (220,209,48,5,1500000000,5,NULL);
       INSERT INTO alternative_names(id,product_id,name) VALUES(99999,201,'Secret alias');
       INSERT INTO game_bundles(member_id,bundle_id) VALUES(207,200),(208,200);
       UPDATE catalog_cache_revision SET revision=revision+1 WHERE id=1;
@@ -62,7 +65,7 @@ def exercise(request, sql):
         return {p['id'] for p in catalog(**params)['items'] if p['id'] >= 200}
 
     expected = {200, 206, 209, 210, 216}
-    extended = expected | {201, 203, 204, 205, 211, 213, 214, 215}
+    extended = expected | {201, 203, 204, 205, 211, 212, 213, 214, 215}
     assert ids() == expected, 'Require a non-cancelled dated release on the selected platform'
     assert ids(query='Visibility') == expected, 'Search must respect visibility and game-type exclusions'
     assert ids(query='Secret alias') == set()
@@ -87,8 +90,17 @@ def exercise(request, sql):
         assert page['total_count'] == all_visible['total_count']
         assert page['items'] == all_visible['items'][1:2]
     assert ids(unknown='true') == {209, 210, 216}
-    # Regional Unknown needs a release on this platform, even with unreleased enabled.
-    assert ids(unknown='true', include_unreleased='true') == {205, 209, 210, 211, 213, 215, 216}
+    for item in catalog(include_unreleased='true')['items']:
+        assert item['is_released'] == (item['id'] in expected)
+
+    # Unknown never includes unreleased games, even with an explicit opt-in.
+    assert ids(unknown='true', include_unreleased='true') == {209, 210, 216}
+    platform = next(p for p in request('/api/platforms') if p['id'] == 48)
+    totals = catalog(unknown='true')['region_totals']
+    for region in ['europe','america','japan','other']:
+        assert platform[region + '_games'] == totals[region], (platform, totals)
+    assert catalog(unknown='true', query='100%_game')['region_totals']['japan'] == 0
+    assert catalog(unknown='true', query='100%_game')['region_counts']['japan'] == 0
     for include in ['false', 'true']:
         unknown = catalog(unknown='true', include_unreleased=include)
         assert unknown['total_count'] == len(unknown['items'])
