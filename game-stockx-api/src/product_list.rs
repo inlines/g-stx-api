@@ -222,7 +222,7 @@ pub async fn list(
     if !matches!(search_mode, "name" | "serial") {
         return HttpResponse::BadRequest().body("Invalid search mode");
     }
-    let mut text_query = query.query.clone().unwrap_or_default();
+    let mut text_query = query.query.as_deref().unwrap_or_default().trim().to_owned();
     if text_query.chars().count() > 200 {
         return HttpResponse::BadRequest().body("Search query too long");
     }

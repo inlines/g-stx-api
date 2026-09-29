@@ -26,7 +26,11 @@ pub async fn enforce<B: MessageBody>(
         && actix_web::web::Query::<std::collections::HashMap<String, String>>::from_query(
             req.query_string(),
         )
-        .map(|params| params.get("query").is_some_and(|value| !value.is_empty()))
+        .map(|params| {
+            params
+                .get("query")
+                .is_some_and(|value| !value.trim().is_empty())
+        })
         .unwrap_or(true);
     let needs_session = !public(req.method(), req.path())
         || catalogue_search
@@ -64,7 +68,6 @@ mod tests {
             "/api/products?cat=9&limit=20&offset=20&search_mode=name&query=Worms",
             "/api/products?cat=9&limit=20&search_mode=serial&query=BLES-00933",
             "/api/products?cat=9&limit=20&search_mode=serial&query=invalid",
-            "/api/products?cat=9&limit=20&query=%20",
             "/api/release-calendar",
             "/api/companies/1",
             "/api/franchises/1",
@@ -81,7 +84,12 @@ mod tests {
         }
         for path in [
             "/api/products",
-            "/api/products?cat=9&limit=20&query=&search_mode=name",
+            "/api/products?cat=9&limit=15&offset=0&query=&search_mode=name",
+            "/api/products?cat=9&limit=15&offset=15&query=&search_mode=name",
+            "/api/products?cat=9&limit=15&offset=0&query=&search_mode=serial",
+            "/api/products?cat=9&limit=15&offset=15&query=&search_mode=serial",
+            "/api/products?cat=9&limit=15&offset=0&query=%20&search_mode=name",
+            "/api/products?cat=9&limit=15&offset=15&query=%20&search_mode=serial",
             "/api/products?cat=9&limit=20&search_mode=serial",
             "/api/platforms",
             "/api/genres",
