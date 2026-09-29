@@ -19,6 +19,7 @@ use r2d2::{Pool, PooledConnection};
 use actix::prelude::*;
 
 mod admin;
+mod api_access;
 mod auth;
 mod chat;
 mod collection;
@@ -32,12 +33,12 @@ mod metrics;
 mod metrics_middleware;
 mod pagination;
 mod platforms;
-mod release_calendar;
 mod product_details;
 mod product_list;
 mod profile;
 mod redis;
 mod register;
+mod release_calendar;
 mod release_dates;
 mod serial_number;
 mod serial_requests;
@@ -118,6 +119,7 @@ async fn main() -> io::Result<()> {
             )
             .service(
                 web::scope("/api")
+                    .wrap(middleware::from_fn(api_access::enforce))
                     .service(product_list::list)
                     .service(franchises::get_franchise)
                     .service(genres::list)

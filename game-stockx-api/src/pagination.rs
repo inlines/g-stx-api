@@ -54,3 +54,23 @@ impl Pagination {
         Ok(groups)
     }
 }
+
+/// Two pages at the requested page size, capped at twenty cards each.
+pub fn guest_catalog_page(limit: i64, offset: i64) -> bool {
+    (1..=20).contains(&limit) && (offset == 0 || offset == limit)
+}
+
+#[cfg(test)]
+mod guest_tests {
+    #[actix_web::test]
+    async fn only_first_two_pages() {
+        for size in [1, 10, 20] {
+            assert!(super::guest_catalog_page(size, 0));
+            assert!(super::guest_catalog_page(size, size));
+            assert!(!super::guest_catalog_page(size, size * 2));
+        }
+        for (size, offset) in [(21, 0), (1000, 0), (20, 21), (10, 20), (0, 0), (20, -1)] {
+            assert!(!super::guest_catalog_page(size, offset));
+        }
+    }
+}

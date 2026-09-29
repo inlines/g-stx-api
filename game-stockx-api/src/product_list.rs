@@ -1,13 +1,13 @@
 use crate::pagination::Pagination;
 use crate::{
-    redis::{self, Cache, RedisPool},
     DBPool,
+    redis::{self, Cache, RedisPool},
 };
 use actix_web::web::{self, Data};
 use actix_web::{HttpRequest, HttpResponse, ResponseError};
+use diesel::RunQueryDsl;
 use diesel::prelude::*;
 use diesel::sql_types::{Array, BigInt, Bool, Double, Integer, Nullable, Text};
-use diesel::RunQueryDsl;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Deserialize, Serialize, QueryableByName)]
@@ -140,7 +140,9 @@ fn build_region_filter(platform: &str, regions: &str) -> String {
 // Exact regional releases take precedence even when all are digital-only.
 // Worldwide is a fallback only when no exact release exists.
 fn physical_region_filter(platform: &str, regions: &str) -> String {
-    format!(" AND EXISTS (SELECT 1 FROM unnest(CASE WHEN cardinality({regions}::text[])=0 THEN ARRAY['europe','america','japan','other']::text[] ELSE {regions}::text[] END) selected_region(region) JOIN releases physical_region ON physical_region.product_id=p.id AND physical_region.platform={platform} AND NOT physical_region.digital_only AND physical_region.release_status IS DISTINCT FROM 5 AND physical_region.release_date <= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) WHERE (CASE physical_region.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=selected_region.region OR (physical_region.release_region=8 AND NOT EXISTS(SELECT 1 FROM releases exact WHERE exact.product_id=p.id AND exact.platform={platform} AND (CASE exact.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=selected_region.region))) ")
+    format!(
+        " AND EXISTS (SELECT 1 FROM unnest(CASE WHEN cardinality({regions}::text[])=0 THEN ARRAY['europe','america','japan','other']::text[] ELSE {regions}::text[] END) selected_region(region) JOIN releases physical_region ON physical_region.product_id=p.id AND physical_region.platform={platform} AND NOT physical_region.digital_only AND physical_region.release_status IS DISTINCT FROM 5 AND physical_region.release_date <= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) WHERE (CASE physical_region.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=selected_region.region OR (physical_region.release_region=8 AND NOT EXISTS(SELECT 1 FROM releases exact WHERE exact.product_id=p.id AND exact.platform={platform} AND (CASE exact.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=selected_region.region))) "
+    )
 }
 
 // A game is Unknown when at least one requested UI region has no selected code.
@@ -239,7 +241,10 @@ pub async fn list(
     let sort = query.sort.clone().unwrap_or_default();
     let include_unreleased = !unknown && query.include_unreleased.unwrap_or(false);
 
-    if limit > 20 || offset > 20 {
+    if !crate::pagination::guest_catalog_page(limit, offset)
+        || query.company_id.is_some()
+        || query.franchise_id.is_some()
+    {
         // Извлекаем токен из заголовка
 
         // Проверяем JWT токен
