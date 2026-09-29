@@ -20,8 +20,17 @@ pub async fn enforce<B: MessageBody>(
     // Login must report bad credentials itself, even if a browser sent an old token.
     let entry =
         req.method() == Method::POST && matches!(req.path(), "/api/login" | "/api/register");
-    let needs_session =
-        !public(req.method(), req.path()) || req.headers().contains_key("authorization");
+    // Search is private even on the first two catalogue pages. Check before
+    // handler validation so malformed serial searches also return 401 to guests.
+    let catalogue_search = req.path() == "/api/products"
+        && actix_web::web::Query::<std::collections::HashMap<String, String>>::from_query(
+            req.query_string(),
+        )
+        .map(|params| params.get("query").is_some_and(|value| !value.is_empty()))
+        .unwrap_or(true);
+    let needs_session = !public(req.method(), req.path())
+        || catalogue_search
+        || req.headers().contains_key("authorization");
     if !entry
         && needs_session
         && crate::auth::authenticated_claims_async(req.request())
@@ -51,6 +60,11 @@ mod tests {
         .await;
         for path in [
             "/api/products/1",
+            "/api/products?cat=9&limit=20&offset=0&query=Worms",
+            "/api/products?cat=9&limit=20&offset=20&search_mode=name&query=Worms",
+            "/api/products?cat=9&limit=20&search_mode=serial&query=BLES-00933",
+            "/api/products?cat=9&limit=20&search_mode=serial&query=invalid",
+            "/api/products?cat=9&limit=20&query=%20",
             "/api/release-calendar",
             "/api/companies/1",
             "/api/franchises/1",
@@ -65,7 +79,13 @@ mod tests {
                 test::call_service(&app, test::TestRequest::get().uri(path).to_request()).await;
             assert_eq!(response.status(), 401, "{path}");
         }
-        for path in ["/api/products", "/api/platforms", "/api/genres"] {
+        for path in [
+            "/api/products",
+            "/api/products?cat=9&limit=20&query=&search_mode=name",
+            "/api/products?cat=9&limit=20&search_mode=serial",
+            "/api/platforms",
+            "/api/genres",
+        ] {
             assert_eq!(
                 test::call_service(&app, test::TestRequest::get().uri(path).to_request())
                     .await
