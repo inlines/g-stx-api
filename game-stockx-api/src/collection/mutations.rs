@@ -147,20 +147,38 @@ async fn add_release(
     }
 
     let insert_query = r#"
-        INSERT INTO users_have_releases (release_id, user_login, price, product_id)
-        SELECT id, $2, $3, product_id FROM releases WHERE id=$1
-        ON CONFLICT DO NOTHING
+        WITH eligible AS (
+            SELECT id, product_id FROM releases
+            WHERE id=$1 AND release_status IS DISTINCT FROM 5
+              AND release_date <= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)
+        ), inserted AS (
+            INSERT INTO users_have_releases (release_id, user_login, price, product_id)
+            SELECT id, $2, $3, product_id FROM eligible
+            ON CONFLICT DO NOTHING RETURNING release_id
+        )
+        SELECT EXISTS(SELECT 1 FROM eligible) AS released,
+               (SELECT COUNT(*) FROM inserted) AS total
     "#;
 
+    #[derive(QueryableByName)]
+    struct AddResult {
+        #[diesel(sql_type = Bool)]
+        released: bool,
+        #[diesel(sql_type = diesel::sql_types::BigInt)]
+        total: i64,
+    }
     let result = diesel::sql_query(insert_query)
         .bind::<Integer, _>(data.release_id)
         .bind::<Text, _>(&user_login)
         .bind::<Nullable<Integer>, _>(data.price)
-        .execute(conn);
+        .get_result::<AddResult>(conn);
 
     match result {
-        Ok(inserted) => {
-            SUCCESSFUL_ADD_TO_COLLECTION.inc_by(inserted as f64);
+        Ok(row) if !row.released => {
+            HttpResponse::BadRequest().body("Unreleased games cannot be added to collection")
+        }
+        Ok(row) => {
+            SUCCESSFUL_ADD_TO_COLLECTION.inc_by(row.total as f64);
             HttpResponse::Ok().body(())
         }
         Err(err) => {

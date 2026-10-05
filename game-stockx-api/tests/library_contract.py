@@ -65,11 +65,12 @@ try:
   sql("UPDATE product_platforms SET digital_only=true WHERE product_id=1 AND platform_id=48")
   digital=req('/library/collection?cat=48&limit=1')
   assert digital['items'][0]['digital_only'] is True
-  assert digital['owned_regions']['europe']==50
+  assert digital['owned_regions']['europe']==49
+  assert digital['owned_regions']['other']==1  # Worldwide belongs only to Other.
   sql("UPDATE product_platforms SET digital_only=false WHERE product_id=1 AND platform_id=48")
   sql("UPDATE releases SET release_status=5 WHERE id=2; UPDATE releases SET release_date=NULL WHERE id=3; UPDATE releases SET release_date=2100000000 WHERE id=4; UPDATE products SET game_type=5 WHERE id=5")
-  assert req('/library/collection?cat=48')['owned_regions']['europe']==47
-  assert req('/library/collection?login=alice&cat=48')['owned_regions']['europe']==47
+  assert req('/library/collection?cat=48')['owned_regions']['europe']==46
+  assert req('/library/collection?login=alice&cat=48')['owned_regions']['europe']==46
   sql("UPDATE releases SET release_status=NULL,release_date=1000+id WHERE id IN(2,3,4); UPDATE products SET game_type=0 WHERE id=5")
   req('/collection-copy',{'release_id':1,'selected_serial':'cusa00101','cib':False})
   for kind in ['collection','wts']:
@@ -89,6 +90,17 @@ try:
   req('/library/wishlist?login=bob',status=400)
   req('/library/collection?limit=0',status=400)
   req('/library/collection?sort=invalid',status=400)
+  # Unreleased releases can be wished for, but not owned (also with local negative IDs).
+  sql("""INSERT INTO releases(id,product_id,platform,release_region,release_date,release_status)
+    VALUES(-91001,2,48,1,EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)::integer+86400,NULL),
+          (-91002,2,48,1,NULL,NULL),(-91003,2,48,1,1000,5);""")
+  for release_id in [-91001,-91002,-91003]:
+   req('/add_release',{'release_id':release_id},status=400)
+   req('/add_wish',{'release_id':release_id})
+   assert sql(f"SELECT count(*) FROM users_have_releases WHERE release_id={release_id}")=='0'
+   assert sql(f"SELECT count(*) FROM users_have_wishes WHERE release_id={release_id}")=='1'
+   req('/remove_wish',{'release_id':release_id})
+  sql("DELETE FROM releases WHERE id IN (-91001,-91002,-91003)")
   # Negative IDs are first-class releases, including imported regional splits.
   sql("INSERT INTO releases(id,product_id,platform,release_region,release_date,serial) VALUES(-90001,2,48,1,1002,ARRAY['CUSA-NEG001']);")
   req('/add_release',{'release_id':-90001})
