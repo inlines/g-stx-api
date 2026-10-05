@@ -37,52 +37,24 @@ pub struct PlatformItem {
 
 async fn load_from_db(pool: &Data<DBPool>) -> Result<Vec<PlatformItem>, HttpResponse> {
     let query = r#"
-WITH releases AS MATERIALIZED (
- SELECT r.*, (r.release_status IS DISTINCT FROM 5 AND r.release_date <= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)) AS released, EXISTS(SELECT 1 FROM unnest(r.serial) s WHERE btrim(s)<>'') AS known
- FROM public.releases r JOIN public.platforms pl ON pl.id=r.platform AND pl.active=true AND pl.id<>6
-), flags AS (
- SELECT product_id,platform,
-   bool_or(released) AS visible,
-   bool_or(NOT digital_only AND released AND known) AS physical,
-   bool_or(release_region=1) AS pal, bool_or(release_region=2) AS usa,
-   bool_or(release_region=5) AS jap, bool_or(release_region=8) AS ww,
-   bool_or(release_region IS NULL OR release_region NOT IN (1,2,5)) AS other,
-   bool_or(release_region=1 AND NOT digital_only AND released) AS physical_pal,
-   bool_or(release_region=2 AND NOT digital_only AND released) AS physical_usa,
-   bool_or(release_region=5 AND NOT digital_only AND released) AS physical_jap,
-   bool_or(release_region=8 AND NOT digital_only AND released) AS physical_ww,
-   bool_or((release_region IS NULL OR release_region NOT IN (1,2,5)) AND NOT digital_only AND released) AS physical_other,
-   bool_or(release_region=1 AND NOT digital_only AND released AND known) AS known_pal,
-   bool_or(release_region=2 AND NOT digital_only AND released AND known) AS known_usa,
-   bool_or(release_region=5 AND NOT digital_only AND released AND known) AS known_jap,
-   bool_or(release_region=8 AND NOT digital_only AND released AND known) AS known_ww,
-   bool_or((release_region IS NULL OR release_region NOT IN (1,2,5)) AND NOT digital_only AND released AND known) AS known_other
- FROM releases GROUP BY product_id,platform
-), eligible AS (
- SELECT f.* FROM flags f JOIN public.products p ON p.id=f.product_id
- WHERE f.visible
- AND (public.effective_game_type(p.id,f.platform,p.game_type) NOT IN (1,2,4,13,6,5,14) OR public.effective_game_type(p.id,f.platform,p.game_type) IS NULL
-      OR (f.platform=7 AND public.effective_game_type(p.id,f.platform,p.game_type) IN (2,4) AND f.physical))
- AND EXISTS(SELECT 1 FROM public.product_platforms pp WHERE pp.product_id=p.id
-            AND pp.platform_id=f.platform AND pp.digital_only=false)
-), regional AS (
- SELECT e.product_id,e.platform,r.region,r.present,r.known FROM eligible e
- CROSS JOIN LATERAL (VALUES
- ('pal',CASE WHEN COALESCE(e.pal,false) THEN COALESCE(e.physical_pal,false) ELSE COALESCE(e.physical_ww,false) END,
-    CASE WHEN COALESCE(e.pal,false) THEN COALESCE(e.known_pal,false) ELSE COALESCE(e.known_ww,false) END),
- ('usa',CASE WHEN COALESCE(e.usa,false) THEN COALESCE(e.physical_usa,false) ELSE COALESCE(e.physical_ww,false) END,
-    CASE WHEN COALESCE(e.usa,false) THEN COALESCE(e.known_usa,false) ELSE COALESCE(e.known_ww,false) END),
- ('jap',CASE WHEN COALESCE(e.jap,false) THEN COALESCE(e.physical_jap,false) ELSE COALESCE(e.physical_ww,false) END,
-    CASE WHEN COALESCE(e.jap,false) THEN COALESCE(e.known_jap,false) ELSE COALESCE(e.known_ww,false) END),
- ('other',COALESCE(e.physical_other,false),COALESCE(e.known_other,false))
- ) r(region,present,known)
+WITH eligible AS MATERIALIZED (
+ SELECT r.* FROM public.releases r
+ JOIN public.platforms pl ON pl.id=r.platform AND pl.active=true AND pl.id<>6
+ JOIN public.products p ON p.id=r.product_id
+ WHERE r.digital_only IS NOT TRUE
+ AND r.release_status IS DISTINCT FROM 5
+ AND r.release_date <= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)
+ AND (public.effective_game_type(p.id,r.platform,p.game_type) NOT IN (1,2,4,13,6,5,14)
+      OR public.effective_game_type(p.id,r.platform,p.game_type) IS NULL
+      OR (r.platform=7 AND public.effective_game_type(p.id,r.platform,p.game_type) IN (2,4)
+          AND EXISTS(SELECT 1 FROM unnest(r.serial) s WHERE btrim(s)<>'')))
 ), counts AS (
- SELECT platform, count(DISTINCT product_id) FILTER (WHERE present)::integer AS total_games,
- count(*) FILTER (WHERE region='pal' AND present)::integer AS europe_games,
- count(*) FILTER (WHERE region='usa' AND present)::integer AS america_games,
- count(*) FILTER (WHERE region='jap' AND present)::integer AS japan_games,
- count(*) FILTER (WHERE region='other' AND present)::integer AS other_games
- FROM regional GROUP BY platform
+ SELECT platform, count(*)::integer AS total_games,
+ count(*) FILTER (WHERE release_region=1)::integer AS europe_games,
+ count(*) FILTER (WHERE release_region=2)::integer AS america_games,
+ count(*) FILTER (WHERE release_region=5)::integer AS japan_games,
+ count(*) FILTER (WHERE release_region IS NULL OR release_region NOT IN (1,2,5))::integer AS other_games
+ FROM eligible GROUP BY platform
 )
 SELECT p.id,p.abbreviation,p.name,p.generation,
 COALESCE(c.total_games,0) AS total_games,COALESCE(c.europe_games,0) AS europe_games,
@@ -108,7 +80,7 @@ pub async fn get_platforms(pool: Data<DBPool>, redis_pool: Data<RedisPool>) -> H
         Ok(value) => value,
         Err(_) => return HttpResponse::InternalServerError().finish(),
     };
-    let cache_key = format!("cache:v6:platforms:released-regions:catalog_v{}", versions.catalog);
+    let cache_key = format!("cache:v7:platforms:released-release-regions:catalog_v{}:day{}", versions.catalog, chrono::Utc::now().format("%Y%m%d"));
     if let Some(cached) =
         redis::read::<Vec<PlatformItem>>(&redis_pool, Cache::Platforms, &cache_key).await
     {

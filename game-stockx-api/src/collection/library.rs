@@ -113,7 +113,7 @@ filtered AS MATERIALIZED (
 SELECT jsonb_build_object(
  'total_count',(SELECT count(*) FROM filtered), 'unfiltered_total',(SELECT count(*) FROM platform_items),
  'platform_ids',COALESCE((SELECT jsonb_agg(id ORDER BY id) FROM (SELECT DISTINCT platform_id id FROM base) ids),'[]'),
- 'owned_regions',(SELECT jsonb_object_agg(g,(SELECT count(DISTINCT product_id) FROM platform_items b WHERE NOT b.digital_only AND b.countable_box AND (b.region_group=g OR (b.region_id=8 AND NOT EXISTS(SELECT 1 FROM releases exact WHERE exact.product_id=b.product_id AND exact.platform=b.platform_id AND (CASE exact.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=g))))) FROM unnest(ARRAY['europe','america','japan','other']) g),
+ 'owned_regions',(SELECT jsonb_object_agg(g,(SELECT count(DISTINCT release_id) FROM platform_items b WHERE NOT b.digital_only AND b.countable_box AND b.region_group=g)) FROM unnest(ARRAY['europe','america','japan','other']) g),
  'items',COALESCE((SELECT jsonb_agg(to_jsonb(b) || jsonb_build_object(
  'image_url',CASE WHEN cover_id IS NOT NULL THEN '//89.104.66.193/static/covers-full/'||cover_id||'.jpg' END,
  'local_players',mp.local_players,'online_players',mp.online_players,'local_multiplayer',mp.local_multiplayer,'online_multiplayer',mp.online_multiplayer) ORDER BY CASE WHEN $6='date' THEN release_date END ASC NULLS LAST, CASE WHEN $6='price' THEN price END ASC NULLS LAST, CASE WHEN $6='rating' THEN total_rating END DESC NULLS LAST, lower(product_name),release_id)
