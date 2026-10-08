@@ -100,7 +100,7 @@ fn build_cache_key(
 ) -> String {
     // JSON encoding keeps delimiters in user-supplied search strings unambiguous.
     format!(
-        "cache:v21:catalog:undated-visible:{}",
+        "cache:v22:catalog:regional-unreleased:{}",
         serde_json::json!([cat, limit, offset, query, ignore_digital, sort])
     )
 }
@@ -129,10 +129,11 @@ fn visibility_filter(unreleased: &str, platform: &str) -> String {
 }
 
 // EXISTS keeps a game unique even when several releases match selected regions.
-fn build_region_filter(platform: &str, regions: &str) -> String {
+fn build_region_filter(platform: &str, regions: &str, unreleased: &str) -> String {
     format!(" AND (cardinality({regions}::text[])=0 OR EXISTS (
         SELECT 1 FROM releases region_release
         WHERE region_release.product_id=p.id AND region_release.platform={platform}
+        AND ({unreleased} OR (region_release.release_status IS DISTINCT FROM 5 AND (region_release.release_date IS NULL OR region_release.release_date <= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP))))
         AND (region_release.release_region=8 OR (CASE region_release.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=ANY({regions}))
     )) ")
 }
@@ -309,7 +310,7 @@ pub async fn list(
         " AND (NOT $9 OR EXISTS(SELECT 1 FROM product_multiplayer_modes m WHERE m.game=p.id AND m.platform=$4 AND {local})) AND (NOT $10 OR EXISTS(SELECT 1 FROM product_multiplayer_modes m WHERE m.game=p.id AND m.platform=$4 AND {online})) "
     );
     let visibility = visibility_filter("$11", "$4");
-    let region_filter = build_region_filter("$4", "$12");
+    let region_filter = build_region_filter("$4", "$12", "$11");
     let serials = serials_exist("$4");
     let unknown_filter = if unknown {
         format!("AND {}", regional_unknown("$4", "$12"))
@@ -327,7 +328,7 @@ pub async fn list(
             p.id AS id,
             p.name AS name,
             {has_serials} AS has_serials,
-            EXISTS(SELECT 1 FROM releases available WHERE available.product_id=p.id AND available.platform=$4 AND available.release_status IS DISTINCT FROM 5 AND (available.release_date IS NULL OR available.release_date <= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP))) AS is_released,
+            EXISTS(SELECT 1 FROM releases available WHERE available.product_id=p.id AND available.platform=$4 AND available.release_status IS DISTINCT FROM 5 AND (available.release_date IS NULL OR available.release_date <= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)) AND (cardinality($12::text[])=0 OR available.release_region=8 OR (CASE available.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=ANY($12))) AS is_released,
             {selected_serials} AS serial,
             EXISTS(SELECT 1 FROM product_platforms pp WHERE pp.product_id=p.id AND pp.platform_id=$4 AND pp.digital_only) AS digital_only,
             p.first_release_date AS first_release_date,
@@ -377,7 +378,7 @@ pub async fn list(
         .replace("$10", "$8")
         .replace("$4", "$1");
     let visibility = visibility_filter("$9", "$1");
-    let region_filter = build_region_filter("$1", "$10");
+    let region_filter = build_region_filter("$1", "$10", "$9");
     let unknown_filter = if unknown {
         format!("AND {}", regional_unknown("$1", "$10"))
     } else {

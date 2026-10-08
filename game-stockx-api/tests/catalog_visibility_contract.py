@@ -100,6 +100,11 @@ def exercise(request, sql):
     for region in ['europe','america','japan','other']:
         assert platform[region + '_games'] == catalog(regions=region)['total_count'], (platform, totals)
         assert totals[region] <= platform[region + '_games']
+    assert ids(query='100%_game', regions='japan') == set(), 'A released EU edition must not expose cancelled Japan'
+    cancelled_jp = catalog(query='100%_game', regions='japan', include_unreleased='true')
+    assert cancelled_jp['total_count'] == 1 and cancelled_jp['items'][0]['is_released'] is False
+    assert ids(query='100%_game', regions='europe') == {209}
+    assert ids(query='100%_game', regions='japan', unknown='true', include_unreleased='true') == set()
     assert catalog(unknown='true', query='100%_game')['region_totals']['japan'] == 0
     assert catalog(unknown='true', query='100%_game')['region_counts']['japan'] == 0
     for include in ['false', 'true']:
