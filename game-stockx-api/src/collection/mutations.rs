@@ -150,7 +150,7 @@ async fn add_release(
         WITH eligible AS (
             SELECT id, product_id FROM releases
             WHERE id=$1 AND release_status IS DISTINCT FROM 5
-              AND release_date <= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)
+              AND (release_date IS NULL OR release_date <= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP))
         ), inserted AS (
             INSERT INTO users_have_releases (release_id, user_login, price, product_id)
             SELECT id, $2, $3, product_id FROM eligible

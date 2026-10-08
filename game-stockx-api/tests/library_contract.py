@@ -94,12 +94,15 @@ try:
   sql("""INSERT INTO releases(id,product_id,platform,release_region,release_date,release_status)
     VALUES(-91001,2,48,1,EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)::integer+86400,NULL),
           (-91002,2,48,1,NULL,NULL),(-91003,2,48,1,1000,5);""")
-  for release_id in [-91001,-91002,-91003]:
+  for release_id in [-91001,-91003]:
    req('/add_release',{'release_id':release_id},status=400)
    req('/add_wish',{'release_id':release_id})
    assert sql(f"SELECT count(*) FROM users_have_releases WHERE release_id={release_id}")=='0'
    assert sql(f"SELECT count(*) FROM users_have_wishes WHERE release_id={release_id}")=='1'
    req('/remove_wish',{'release_id':release_id})
+  req('/add_release',{'release_id':-91002})
+  assert sql("SELECT count(*) FROM users_have_releases WHERE release_id=-91002 AND user_login='alice'")=='1'
+  req('/remove_release',{'release_id':-91002})
   sql("DELETE FROM releases WHERE id IN (-91001,-91002,-91003)")
   # Negative IDs are first-class releases, including imported regional splits.
   sql("INSERT INTO releases(id,product_id,platform,release_region,release_date,serial) VALUES(-90001,2,48,1,1002,ARRAY['CUSA-NEG001']);")
