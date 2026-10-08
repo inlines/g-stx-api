@@ -64,15 +64,15 @@ def exercise(request, sql):
     def ids(**params):
         return {p['id'] for p in catalog(**params)['items'] if p['id'] >= 200}
 
-    expected = {200, 206, 209, 210, 216}
+    expected = {200, 204, 205, 206, 209, 210, 211, 216}
     extended = expected | {201, 203, 204, 205, 211, 212, 213, 214, 215}
-    assert ids() == expected, 'Require a non-cancelled dated release on the selected platform'
+    assert ids() == expected, 'Require a non-cancelled past or undated release on the selected platform'
     assert ids(query='Visibility') == expected, 'Search must respect visibility and game-type exclusions'
     assert ids(query='Secret alias') == set()
     assert ids(query='Secret alias', include_unreleased='true') == {201}
-    assert ids(query='undated') == set(), 'An existing serial must not bypass the missing date'
+    assert ids(query='undated') == {204}, 'Unknown date must not hide a release'
     assert ids(query='undated', include_unreleased='true') == {204}
-    assert ids(query='Super Mario War') == set(), 'A date on another platform must not leak'
+    assert ids(query='Super Mario War') == {211}, 'An undated local release is visible without relying on another platform'
     assert ids(query='Super Mario War', include_unreleased='true') == {211}
     assert ids(query='Cancelled') == set(), 'Cancelled dates and even serials must not bypass the gate'
     assert ids(query='Cancelled', include_unreleased='true') == {213, 214, 215}
@@ -89,16 +89,17 @@ def exercise(request, sql):
         page = catalog(limit=1, offset=1, include_unreleased=include)
         assert page['total_count'] == all_visible['total_count']
         assert page['items'] == all_visible['items'][1:2]
-    assert ids(unknown='true') == {209, 210, 216}
+    assert ids(unknown='true') == {205, 209, 210, 211, 216}
     for item in catalog(include_unreleased='true')['items']:
         assert item['is_released'] == (item['id'] in expected)
 
     # Unknown never includes unreleased games, even with an explicit opt-in.
-    assert ids(unknown='true', include_unreleased='true') == {209, 210, 216}
+    assert ids(unknown='true', include_unreleased='true') == {205, 209, 210, 211, 216}
     platform = next(p for p in request('/api/platforms') if p['id'] == 48)
     totals = catalog(unknown='true')['region_totals']
     for region in ['europe','america','japan','other']:
-        assert platform[region + '_games'] == totals[region], (platform, totals)
+        assert platform[region + '_games'] == catalog(regions=region)['total_count'], (platform, totals)
+        assert totals[region] <= platform[region + '_games']
     assert catalog(unknown='true', query='100%_game')['region_totals']['japan'] == 0
     assert catalog(unknown='true', query='100%_game')['region_counts']['japan'] == 0
     for include in ['false', 'true']:
@@ -106,11 +107,11 @@ def exercise(request, sql):
         assert unknown['total_count'] == len(unknown['items'])
         for region in ['europe', 'america', 'japan', 'other']:
             assert unknown['region_counts'][region] == catalog(unknown='true', include_unreleased=include, regions=region)['total_count']
-    # Adding a serial alone must not reveal the game; filling the date does.
+    # Creating an undated non-cancelled release reveals the game.
     sql("INSERT INTO releases(id,product_id,platform,release_region,serial) VALUES(201,201,48,1,ARRAY['TEST-201']); UPDATE catalog_cache_revision SET revision=revision+1 WHERE id=1;")
-    assert ids() == expected
+    assert ids() == expected | {201}
     sql("UPDATE releases SET release_date=1500000000 WHERE id=201; UPDATE catalog_cache_revision SET revision=revision+1 WHERE id=1;")
     assert ids() == expected | {201}
     assert next(p for p in catalog()['items'] if p['id'] == 201)['has_serials'] is True
     sql("DELETE FROM alternative_names WHERE id=99999; DELETE FROM game_bundles WHERE bundle_id=200; DELETE FROM products WHERE id BETWEEN 200 AND 216; DELETE FROM platforms WHERE id=167; UPDATE catalog_cache_revision SET revision=revision+1 WHERE id=1;")
-    print('PASS: strict platform date/cancellation gate (serials never bypass), mixed release statuses, blank serials, unknown game date, alias search, checkbox/cache separation and pagination')
+    print('PASS: unknown-date visibility and future/cancellation gate, mixed release statuses, blank serials, unknown game date, alias search, checkbox/cache separation and pagination')

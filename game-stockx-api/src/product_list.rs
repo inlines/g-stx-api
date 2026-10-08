@@ -100,14 +100,14 @@ fn build_cache_key(
 ) -> String {
     // JSON encoding keeps delimiters in user-supplied search strings unambiguous.
     format!(
-        "cache:v20:catalog:released-unknown:{}",
+        "cache:v21:catalog:undated-visible:{}",
         serde_json::json!([cat, limit, offset, query, ignore_digital, sort])
     )
 }
 
 // Shared by list, total_count and Unknown region counts. A non-cancelled
-// dated release must belong to the selected platform. Serials and the global
-// game date cannot bypass this gate; include_unreleased explicitly disables it.
+// release with an unknown or past date must belong to the selected platform. Serials and the global
+// game date cannot bypass cancellation/future dates; include_unreleased explicitly disables it.
 // IGDB release_date_statuses id=5 is Cancelled; NULL status supports legacy data.
 fn visibility_filter(unreleased: &str, platform: &str) -> String {
     format!(
@@ -116,7 +116,7 @@ fn visibility_filter(unreleased: &str, platform: &str) -> String {
             SELECT 1 FROM releases available
             WHERE available.product_id=p.id AND available.platform={platform}
               AND available.release_status IS DISTINCT FROM 5
-              AND available.release_date <= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)
+              AND (available.release_date IS NULL OR available.release_date <= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP))
         ))
         AND (effective_game_type(p.id, ({platform})::integer, p.game_type) NOT IN (1, 2, 4, 13, 6, 5, 14) OR effective_game_type(p.id, ({platform})::integer, p.game_type) IS NULL
              OR ({platform}=7 AND effective_game_type(p.id, ({platform})::integer, p.game_type) IN (2,4) AND EXISTS (
@@ -141,7 +141,7 @@ fn build_region_filter(platform: &str, regions: &str) -> String {
 // Worldwide is a fallback only when no exact release exists.
 fn physical_region_filter(platform: &str, regions: &str) -> String {
     format!(
-        " AND EXISTS (SELECT 1 FROM unnest(CASE WHEN cardinality({regions}::text[])=0 THEN ARRAY['europe','america','japan','other']::text[] ELSE {regions}::text[] END) selected_region(region) JOIN releases physical_region ON physical_region.product_id=p.id AND physical_region.platform={platform} AND NOT physical_region.digital_only AND physical_region.release_status IS DISTINCT FROM 5 AND physical_region.release_date <= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) WHERE (CASE physical_region.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=selected_region.region OR (physical_region.release_region=8 AND NOT EXISTS(SELECT 1 FROM releases exact WHERE exact.product_id=p.id AND exact.platform={platform} AND (CASE exact.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=selected_region.region))) "
+        " AND EXISTS (SELECT 1 FROM unnest(CASE WHEN cardinality({regions}::text[])=0 THEN ARRAY['europe','america','japan','other']::text[] ELSE {regions}::text[] END) selected_region(region) JOIN releases physical_region ON physical_region.product_id=p.id AND physical_region.platform={platform} AND NOT physical_region.digital_only AND physical_region.release_status IS DISTINCT FROM 5 AND (physical_region.release_date IS NULL OR physical_region.release_date <= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)) WHERE (CASE physical_region.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=selected_region.region OR (physical_region.release_region=8 AND NOT EXISTS(SELECT 1 FROM releases exact WHERE exact.product_id=p.id AND exact.platform={platform} AND (CASE exact.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=selected_region.region))) "
     )
 }
 
@@ -153,7 +153,7 @@ fn regional_unknown(platform: &str, regions: &str) -> String {
     // Existence only: do not normalize, sort and allocate full serial arrays per count.
     // format_release_serials preserves whether an entry is nonblank.
     let codes = format!(
-        "EXISTS (SELECT 1 FROM releases code_release WHERE code_release.product_id=p.id AND code_release.platform={platform} AND NOT code_release.digital_only AND code_release.release_status IS DISTINCT FROM 5 AND code_release.release_date <= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP) AND EXISTS(SELECT 1 FROM unnest(code_release.serial) sn WHERE btrim(sn)<>'') AND ((CASE code_release.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=unknown_region.region OR (code_release.release_region=8 AND NOT EXISTS(SELECT 1 FROM releases exact WHERE exact.product_id=p.id AND exact.platform={platform} AND (CASE exact.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=unknown_region.region))))"
+        "EXISTS (SELECT 1 FROM releases code_release WHERE code_release.product_id=p.id AND code_release.platform={platform} AND NOT code_release.digital_only AND code_release.release_status IS DISTINCT FROM 5 AND (code_release.release_date IS NULL OR code_release.release_date <= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)) AND EXISTS(SELECT 1 FROM unnest(code_release.serial) sn WHERE btrim(sn)<>'') AND ((CASE code_release.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=unknown_region.region OR (code_release.release_region=8 AND NOT EXISTS(SELECT 1 FROM releases exact WHERE exact.product_id=p.id AND exact.platform={platform} AND (CASE exact.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=unknown_region.region))))"
     );
     format!(
         "EXISTS (SELECT 1 FROM unnest(CASE WHEN cardinality({regions}::text[])=0 THEN ARRAY['europe','america','japan','other']::text[] ELSE {regions}::text[] END) unknown_region(region) WHERE true {present} AND NOT {codes})"
@@ -327,7 +327,7 @@ pub async fn list(
             p.id AS id,
             p.name AS name,
             {has_serials} AS has_serials,
-            EXISTS(SELECT 1 FROM releases available WHERE available.product_id=p.id AND available.platform=$4 AND available.release_status IS DISTINCT FROM 5 AND available.release_date <= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)) AS is_released,
+            EXISTS(SELECT 1 FROM releases available WHERE available.product_id=p.id AND available.platform=$4 AND available.release_status IS DISTINCT FROM 5 AND (available.release_date IS NULL OR available.release_date <= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP))) AS is_released,
             {selected_serials} AS serial,
             EXISTS(SELECT 1 FROM product_platforms pp WHERE pp.product_id=p.id AND pp.platform_id=$4 AND pp.digital_only) AS digital_only,
             p.first_release_date AS first_release_date,

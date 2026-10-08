@@ -30,7 +30,7 @@ INSERT INTO releases VALUES (1,48,1,300),(1,48,1,350),(1,48,2,400),(1,48,8,100),
     assert got[1,48,'{europe}']==300
     assert got[1,48,'{america}']==400
     assert got[1,48,'{america,europe}']==300
-    assert got[1,48,'{japan}']==100
+    assert got[1,48,'{japan}'] is None
     assert got[1,48,'{}']==100
     assert got[1,167,'{europe}']==50
     assert got[1,167,'{japan}']==10
