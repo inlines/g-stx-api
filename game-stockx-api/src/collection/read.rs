@@ -46,7 +46,7 @@ async fn get_collection_stats(pool: web::Data<DBPool>, req: HttpRequest) -> Http
             ARRAY_AGG(uhr.release_id) AS release_ids,
             ARRAY_AGG(uhr.product_id) AS product_ids
             FROM users_have_releases AS uhr
-            JOIN releases AS r ON uhr.release_id = r.id
+            JOIN catalog_visible_releases AS r ON uhr.release_id = r.id
             WHERE uhr.user_login = $1
             GROUP BY r.platform
         ) h
@@ -57,7 +57,7 @@ async fn get_collection_stats(pool: web::Data<DBPool>, req: HttpRequest) -> Http
             COUNT(uhw.release_id) AS release_count,
             ARRAY_AGG(uhw.release_id) AS release_ids
             FROM users_have_wishes AS uhw
-            JOIN releases AS r ON uhw.release_id = r.id
+            JOIN catalog_visible_releases AS r ON uhw.release_id = r.id
             WHERE uhw.user_login = $1
             GROUP BY r.platform
         ) w ON h.platform = w.platform
@@ -67,7 +67,7 @@ async fn get_collection_stats(pool: web::Data<DBPool>, req: HttpRequest) -> Http
                    ARRAY_AGG(sale.release_id) AS release_ids
             FROM users_have_wts sale
             JOIN users_have_releases owned ON owned.release_id = sale.release_id AND owned.user_login = sale.user_login
-            JOIN releases r ON r.id = sale.release_id
+            JOIN catalog_visible_releases r ON r.id = sale.release_id
             WHERE sale.user_login = $1
             GROUP BY r.platform
         ) s ON COALESCE(h.platform, w.platform) = s.platform;
@@ -126,7 +126,7 @@ async fn get_collection(
             '//89.104.66.193/static/covers-full/' || cover.id ||'.jpg' AS image_url,
             reg.name AS region_name
         FROM public.users_have_releases AS uhr
-        INNER JOIN releases AS r ON uhr.release_id = r.id
+        INNER JOIN catalog_visible_releases AS r ON uhr.release_id = r.id
         INNER JOIN platforms AS p ON r.platform = p.id
         INNER JOIN products AS prod ON r.product_id = prod.id
         LEFT JOIN covers AS cover ON cover.id = prod.cover_id
@@ -150,7 +150,7 @@ async fn get_collection(
 
         let count_query = r#"
         SELECT COUNT(*) as total FROM public.users_have_releases AS uhr
-        INNER JOIN releases AS r ON uhr.release_id = r.id
+        INNER JOIN catalog_visible_releases AS r ON uhr.release_id = r.id
         INNER JOIN platforms AS p ON r.platform = p.id
         WHERE uhr.user_login = $1 AND p.id = $2
     "#;
@@ -221,7 +221,7 @@ async fn get_collection_by_login(
             reg.name AS region_name,
             null AS price
         FROM public.users_have_releases AS uhr
-        INNER JOIN releases AS r ON uhr.release_id = r.id
+        INNER JOIN catalog_visible_releases AS r ON uhr.release_id = r.id
         INNER JOIN platforms AS p ON r.platform = p.id
         INNER JOIN products AS prod ON r.product_id = prod.id
         LEFT JOIN covers AS cover ON cover.id = prod.cover_id
@@ -290,7 +290,7 @@ async fn get_wishlist(
             ARRAY[]::text[] AS serial,
             null as price
         FROM public.users_have_wishes AS uhw
-        INNER JOIN releases AS r ON uhw.release_id = r.id
+        INNER JOIN catalog_visible_releases AS r ON uhw.release_id = r.id
         INNER JOIN platforms AS p ON r.platform = p.id
         INNER JOIN products AS prod ON r.product_id = prod.id
         LEFT JOIN covers AS cover ON cover.id = prod.cover_id
@@ -314,7 +314,7 @@ async fn get_wishlist(
 
         let count_query = r#"
         SELECT COUNT(*) as total FROM public.users_have_wishes AS uhw
-        INNER JOIN releases AS r ON uhw.release_id = r.id
+        INNER JOIN catalog_visible_releases AS r ON uhw.release_id = r.id
         INNER JOIN platforms AS p ON r.platform = p.id
         WHERE uhw.user_login = $1 AND p.id = $2
     "#;
@@ -384,7 +384,7 @@ async fn get_wts(
             COALESCE(uhwts.cib, false) AS cib
         FROM public.users_have_wts AS uhwts
         INNER JOIN users_have_releases owned ON owned.release_id = uhwts.release_id AND owned.user_login = uhwts.user_login
-        INNER JOIN releases AS r ON uhwts.release_id = r.id
+        INNER JOIN catalog_visible_releases AS r ON uhwts.release_id = r.id
         INNER JOIN platforms AS p ON r.platform = p.id
         INNER JOIN products AS prod ON r.product_id = prod.id
         INNER JOIN covers AS cover ON cover.id = prod.cover_id
@@ -405,7 +405,7 @@ async fn get_wts(
     let count_query = r#"
         SELECT COUNT(*) as total FROM public.users_have_wts AS uhwts
         INNER JOIN users_have_releases owned ON owned.release_id = uhwts.release_id AND owned.user_login = uhwts.user_login
-        INNER JOIN releases AS r ON uhwts.release_id = r.id
+        INNER JOIN catalog_visible_releases AS r ON uhwts.release_id = r.id
         INNER JOIN platforms AS p ON r.platform = p.id
         WHERE uhwts.user_login = $1 AND p.id = $2
     "#;

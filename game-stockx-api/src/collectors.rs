@@ -36,6 +36,7 @@ async fn get_collectors(pool: web::Data<DBPool>, req: HttpRequest) -> HttpRespon
             users u
         INNER JOIN 
             users_have_releases uhr ON u.user_login = uhr.user_login
+        INNER JOIN catalog_visible_releases visible ON visible.id=uhr.release_id
         WHERE u.user_login <> $1 
         GROUP BY 
             u.id
@@ -98,7 +99,7 @@ async fn get_collector_wts(
         FROM users_have_wts sale
         INNER JOIN users_have_releases owned
             ON owned.release_id = sale.release_id AND owned.user_login = sale.user_login
-        INNER JOIN releases r ON r.id = sale.release_id
+        INNER JOIN catalog_visible_releases r ON r.id = sale.release_id
         INNER JOIN products prod ON prod.id = r.product_id
         INNER JOIN platforms p ON p.id = r.platform
         LEFT JOIN covers cover ON cover.id = prod.cover_id

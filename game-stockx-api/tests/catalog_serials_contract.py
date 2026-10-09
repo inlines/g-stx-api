@@ -11,6 +11,7 @@ with tempfile.TemporaryDirectory() as tmp:
  setup="""BEGIN;
  CREATE TEMP TABLE products(id int); CREATE TEMP TABLE selections(groups text[]);
  CREATE TEMP TABLE releases(product_id int,platform int,release_region int,serial text[]);
+CREATE TEMP VIEW catalog_visible_releases AS SELECT * FROM releases WHERE release_region IN (1,2,5,8);
  INSERT INTO products VALUES(1),(2),(3);
  INSERT INTO selections VALUES('{}'),('{europe}'),('{america}'),('{japan}'),('{europe,america}');
  INSERT INTO releases VALUES(1,9,8,ARRAY['BLUS-30026','BLUS-30026']),

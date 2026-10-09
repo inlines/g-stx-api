@@ -16,7 +16,7 @@ WITH bounds AS (
  SELECT DISTINCT p.id, p.name, r.platform,
  to_char(to_timestamp(r.release_date) AT TIME ZONE 'UTC','YYYY-MM-DD') AS day,
  CASE WHEN p.cover_id IS NOT NULL THEN '//89.104.66.193/static/covers-full/'||p.cover_id||'.jpg' END AS image_url
- FROM releases r JOIN products p ON p.id=r.product_id CROSS JOIN bounds b
+ FROM catalog_visible_releases r JOIN products p ON p.id=r.product_id CROSS JOIN bounds b
  WHERE r.platform IN (48,167) AND r.release_status IS DISTINCT FROM 5
  AND r.release_date >= EXTRACT(EPOCH FROM b.start)
  AND r.release_date < EXTRACT(EPOCH FROM b.start + INTERVAL '3 months')

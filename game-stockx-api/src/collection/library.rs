@@ -92,7 +92,7 @@ WITH base AS MATERIALIZED (
  plat.name platform_name, reg.name region_name,
  o.selected_serial, o.cib, CASE WHEN $9 THEN o.price END purchase_price, {price} price,
  CASE WHEN r.release_region=1 THEN 'europe' WHEN r.release_region=2 THEN 'america' WHEN r.release_region=5 THEN 'japan' ELSE 'other' END region_group
- FROM {source} JOIN releases r ON r.id=l.release_id JOIN products p ON p.id=r.product_id
+ FROM {source} JOIN catalog_visible_releases r ON r.id=l.release_id JOIN products p ON p.id=r.product_id
  JOIN platforms plat ON plat.id=r.platform LEFT JOIN regions reg ON reg.id=r.release_region
  LEFT JOIN users_have_releases o ON o.release_id=l.release_id AND o.user_login=l.user_login
  WHERE l.user_login=$1

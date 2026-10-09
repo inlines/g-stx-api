@@ -10,13 +10,16 @@ f=raw('physical_region_filter').replace('{platform}','9').replace('{regions}',"A
 sql="""BEGIN;
 CREATE TEMP TABLE products(id int);
 CREATE TEMP TABLE releases(product_id int,platform int,release_region int,digital_only bool,release_status int,release_date int,serial text[]);
+CREATE TEMP VIEW catalog_visible_releases AS SELECT * FROM releases WHERE release_region IN (1,2,5,8);
 INSERT INTO products VALUES(1),(2),(3),(4),(5);
 INSERT INTO releases VALUES
 (1,9,1,true,NULL,NULL,'{}'),(1,9,2,false,NULL,NULL,ARRAY['BLUS-10001']), (1,9,8,false,NULL,NULL,'{}'),
 (2,9,1,false,NULL,NULL,'{}'),(2,9,2,false,NULL,NULL,ARRAY['BLUS-10002']),
 (3,9,8,false,NULL,NULL,'{}'),
 (4,9,1,false,5,NULL,'{}'),(4,9,8,false,NULL,NULL,'{}'),
-(5,9,1,false,NULL,2100000000,'{}');
+(5,9,1,false,NULL,2100000000,'{}'),
+(2,9,3,false,NULL,NULL,ARRAY['AU-123']),
+(5,9,3,false,NULL,NULL,'{}');
 SELECT array_agg(p.id ORDER BY p.id) FROM products p WHERE true FILTER;
 ROLLBACK;
 """.replace('FILTER',f)

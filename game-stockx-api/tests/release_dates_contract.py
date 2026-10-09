@@ -18,6 +18,7 @@ fn main() {
 CREATE TEMP TABLE products(id int,first_release_date int);
 CREATE TEMP TABLE platforms(id int);
 CREATE TEMP TABLE releases(product_id int,platform int,release_region int,release_date int);
+CREATE TEMP VIEW catalog_visible_releases AS SELECT * FROM releases WHERE release_region IN (1,2,5,8);
 CREATE TEMP TABLE selections(groups text[]);
 INSERT INTO products VALUES(1,10),(2,20),(3,30),(4,NULL),(5,0);
 INSERT INTO platforms VALUES(48),(167);

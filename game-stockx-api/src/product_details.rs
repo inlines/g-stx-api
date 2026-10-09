@@ -314,7 +314,7 @@ async fn get_product_releases(
             ) AS seller_logins,
             r.digital_only AS digital_only,
             r.serial AS serial
-        FROM releases AS r
+        FROM catalog_visible_releases AS r
         LEFT JOIN platforms AS p ON r.platform = p.id
         INNER JOIN regions AS reg ON reg.id = r.release_region
         LEFT JOIN (
@@ -323,7 +323,7 @@ async fn get_product_releases(
                 AND owned.user_login = wts.user_login
         ) sale ON sale.release_id = r.id
         WHERE r.product_id = $1
-        GROUP BY r.id, reg.name, p.name, p.id
+        GROUP BY r.id, r.product_id, r.platform, r.release_date, r.release_status, r.digital_only, r.serial, reg.name, p.name, p.id
         ORDER BY p.name
     "#;
 
