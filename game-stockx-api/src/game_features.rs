@@ -48,6 +48,9 @@ pub struct SimilarGame {
     pub image_url: Option<String>,
     #[diesel(sql_type = diesel::sql_types::Array<Integer>)]
     pub platform_ids: Vec<i32>,
+    #[diesel(sql_type = diesel::sql_types::Array<Integer>)]
+    #[serde(default)]
+    pub digital_platform_ids: Vec<i32>,
 }
 pub async fn load(
     pool: Data<DBPool>,
@@ -56,8 +59,17 @@ pub async fn load(
     admin::db(pool, move |conn| {
   let modes = diesel::sql_query(format!("SELECT m.platform AS platform_id, p.name AS platform_name, NULLIF(MAX(GREATEST(m.offlinemax,m.offlinecoopmax)),0) AS local_players, NULLIF(MAX(GREATEST(m.onlinemax,m.onlinecoopmax)),0) AS online_players, bool_or({LOCAL}) AS local_multiplayer, bool_or({ONLINE}) AS online_multiplayer, bool_or(m.offlinecoop) AS offline_coop, bool_or(m.onlinecoop) AS online_coop, NULLIF(MAX(m.offlinecoopmax),0) AS offline_coop_players, NULLIF(MAX(m.onlinecoopmax),0) AS online_coop_players FROM product_multiplayer_modes m LEFT JOIN platforms p ON p.id=m.platform WHERE m.game=$1 GROUP BY m.platform,p.name ORDER BY m.platform NULLS LAST"))
    .bind::<Integer,_>(id).load::<MultiplayerMode>(conn)?;
-  let similar = diesel::sql_query("SELECT p.id,p.name, CASE WHEN p.cover_id IS NOT NULL THEN '//89.104.66.193/static/covers-full/'||p.cover_id||'.jpg' ELSE NULL END AS image_url, ARRAY(SELECT pp.platform_id FROM product_platforms pp WHERE pp.product_id=p.id ORDER BY pp.platform_id) AS platform_ids FROM products source CROSS JOIN LATERAL unnest(source.similar_game_ids) WITH ORDINALITY s(id,position) JOIN products p ON p.id=s.id WHERE source.id=$1 AND p.id<>source.id ORDER BY s.position LIMIT 30")
+  let similar = diesel::sql_query("SELECT p.id,p.name, CASE WHEN p.cover_id IS NOT NULL THEN '//89.104.66.193/static/covers-full/'||p.cover_id||'.jpg' ELSE NULL END AS image_url, ARRAY(SELECT pp.platform_id FROM product_platforms pp WHERE pp.product_id=p.id ORDER BY pp.platform_id) AS platform_ids, ARRAY(SELECT pp.platform_id FROM product_platforms pp WHERE pp.product_id=p.id AND pp.digital_only ORDER BY pp.platform_id) AS digital_platform_ids FROM products source CROSS JOIN LATERAL unnest(source.similar_game_ids) WITH ORDINALITY s(id,position) JOIN products p ON p.id=s.id WHERE source.id=$1 AND p.id<>source.id ORDER BY s.position LIMIT 30")
    .bind::<Integer,_>(id).load::<SimilarGame>(conn)?;
   Ok((modes,similar))
+ }).await
+}
+
+pub async fn related(pool: Data<DBPool>, id: i32) -> Result<(Vec<SimilarGame>, Vec<SimilarGame>), AdminError> {
+ admin::db(pool, move |conn| {
+  let columns="SELECT DISTINCT p.id,p.name,CASE WHEN p.cover_id IS NOT NULL THEN '//89.104.66.193/static/covers-full/'||p.cover_id||'.jpg' ELSE NULL END AS image_url, ARRAY(SELECT pp.platform_id FROM product_platforms pp WHERE pp.product_id=p.id ORDER BY pp.platform_id) AS platform_ids, ARRAY(SELECT pp.platform_id FROM product_platforms pp WHERE pp.product_id=p.id AND pp.digital_only ORDER BY pp.platform_id) AS digital_platform_ids FROM products p";
+  let contents=diesel::sql_query(format!("{columns} JOIN game_bundles b ON b.member_id=p.id WHERE b.bundle_id=$1 AND p.id<>$1 ORDER BY p.name")) .bind::<Integer,_>(id).load::<SimilarGame>(conn)?;
+  let dlcs=diesel::sql_query(format!("{columns} JOIN game_dlcs d ON d.dlc_id=p.id WHERE d.main_id=$1 AND p.id<>$1 ORDER BY p.name")) .bind::<Integer,_>(id).load::<SimilarGame>(conn)?;
+  Ok((contents,dlcs))
  }).await
 }

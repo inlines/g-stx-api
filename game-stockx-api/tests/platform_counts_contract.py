@@ -11,9 +11,10 @@ def raw_function(name):
     body=source.split('fn '+name+'(',1)[1].split('\nfn ',1)[0]
     raw=re.search(r'r#"(.*?)"#',body,re.S)
     if raw: return raw.group(1)
-    return re.search(r'format!\("(.*?)"',body,re.S).group(1)
+    return re.search(r'format!\(\s*"(.*?)"',body,re.S).group(1)
 visibility=raw_function('visibility_filter').replace('{unreleased}','false').replace('{platform}','checked_platform_id')
 region=raw_function('build_region_filter').replace('{platform}','checked_platform_id').replace('{regions}','selected_regions').replace('{unreleased}','false')
+region += raw_function('physical_region_filter').replace('{platform}','checked_platform_id').replace('{regions}','selected_regions')
 # Extract the real handler's total_count SQL, not an independently rewritten approximation.
 query=source.split('let count_sql = format!(',1)[1].split('r#"',1)[1].split('"#',1)[0]
 for key,value in dict(region_filter=region,unknown_filter='',regional_columns='0::bigint AS unused',visibility=visibility,

@@ -116,6 +116,8 @@ pub struct ProductResponse {
     genres: Vec<crate::genres::Genre>,
     pub product: ProductProperties,
     pub multiplayer: Vec<crate::game_features::MultiplayerMode>,
+    pub bundle_games: Vec<crate::game_features::SimilarGame>,
+    pub dlcs: Vec<crate::game_features::SimilarGame>,
     pub similar_games: Vec<crate::game_features::SimilarGame>,
     pub releases: Vec<ProductReleaseInfo>,
     pub screenshots: Vec<String>,
@@ -220,6 +222,7 @@ pub async fn get(
             Ok(features) => features,
             Err(_) => return HttpResponse::InternalServerError().finish(),
         };
+    let (bundle_games, dlcs) = match crate::game_features::related(pool.clone(), product_id).await { Ok(value) => value, Err(_) => return HttpResponse::InternalServerError().finish() };
     let genres = match crate::genres::load(pool.clone(), Some(product_id)).await {
         Ok(genres) => genres,
         Err(_) => return HttpResponse::InternalServerError().finish(),
@@ -228,6 +231,8 @@ pub async fn get(
         genres,
         multiplayer,
         similar_games,
+        bundle_games,
+        dlcs,
         product: basic_info,
         releases,
         screenshots,

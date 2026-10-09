@@ -100,7 +100,7 @@ fn build_cache_key(
 ) -> String {
     // JSON encoding keeps delimiters in user-supplied search strings unambiguous.
     format!(
-        "cache:v22:catalog:regional-unreleased:{}",
+        "cache:v23:catalog:regional-physical:{}",
         serde_json::json!([cat, limit, offset, query, ignore_digital, sort])
     )
 }
@@ -173,11 +173,7 @@ fn search_filter(serial: bool, platform: &str, text: &str, regions: &str) -> Str
     }
 }
 
-fn serials_exist(platform: &str) -> String {
-    format!(
-        "EXISTS (SELECT 1 FROM releases r CROSS JOIN LATERAL unnest(r.serial) AS serial_number(value) WHERE r.product_id=p.id AND r.platform={platform} AND btrim(serial_number.value) <> '')"
-    )
-}
+
 
 #[get("/products")]
 pub async fn list(
@@ -310,8 +306,9 @@ pub async fn list(
         " AND (NOT $9 OR EXISTS(SELECT 1 FROM product_multiplayer_modes m WHERE m.game=p.id AND m.platform=$4 AND {local})) AND (NOT $10 OR EXISTS(SELECT 1 FROM product_multiplayer_modes m WHERE m.game=p.id AND m.platform=$4 AND {online})) "
     );
     let visibility = visibility_filter("$11", "$4");
-    let region_filter = build_region_filter("$4", "$12", "$11");
-    let serials = serials_exist("$4");
+    let physical = physical_region_filter("$4", "$12").replace("physical_region.release_status IS DISTINCT FROM 5 AND (physical_region.release_date IS NULL OR physical_region.release_date <= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP))", "($11 OR (physical_region.release_status IS DISTINCT FROM 5 AND (physical_region.release_date IS NULL OR physical_region.release_date <= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP))))");
+    let region_filter = format!("{} AND (NOT $5 OR (true {}))", build_region_filter("$4", "$12", "$11"), physical);
+    let serials = format!("cardinality({}) > 0", crate::catalog_serials::selected_sql("$4", "$12"));
     let unknown_filter = if unknown {
         format!("AND {}", regional_unknown("$4", "$12"))
     } else {
@@ -319,6 +316,7 @@ pub async fn list(
     };
     let search_predicate = search_filter(serial_search, "$4", "$3", "$12");
     let selected_serials = crate::catalog_serials::selected_sql("$4", "$12");
+    let digital = "COALESCE((SELECT bool_and(r.digital_only IS TRUE) FROM releases r WHERE r.product_id=p.id AND r.platform=$4 AND (cardinality($12::text[])=0 OR EXISTS(SELECT 1 FROM unnest($12::text[]) selected(region) WHERE (CASE r.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=selected.region OR (r.release_region=8 AND NOT EXISTS(SELECT 1 FROM releases exact WHERE exact.product_id=p.id AND exact.platform=$4 AND (CASE exact.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=selected.region))))),false)";
     let has_serials = if unknown { "false".to_owned() } else { serials };
     let dates = crate::release_dates::map_sql("p", "$4");
     let selected_date = crate::release_dates::selected_sql("release_dates.dates", "$12");
@@ -330,7 +328,7 @@ pub async fn list(
             {has_serials} AS has_serials,
             EXISTS(SELECT 1 FROM releases available WHERE available.product_id=p.id AND available.platform=$4 AND available.release_status IS DISTINCT FROM 5 AND (available.release_date IS NULL OR available.release_date <= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)) AND (cardinality($12::text[])=0 OR available.release_region=8 OR (CASE available.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=ANY($12))) AS is_released,
             {selected_serials} AS serial,
-            EXISTS(SELECT 1 FROM product_platforms pp WHERE pp.product_id=p.id AND pp.platform_id=$4 AND pp.digital_only) AS digital_only,
+            {digital} AS digital_only,
             p.first_release_date AS first_release_date,
             {selected_date} AS release_date,
             p.total_rating,
@@ -378,7 +376,8 @@ pub async fn list(
         .replace("$10", "$8")
         .replace("$4", "$1");
     let visibility = visibility_filter("$9", "$1");
-    let region_filter = build_region_filter("$1", "$10", "$9");
+    let physical = physical_region_filter("$1", "$10").replace("physical_region.release_status IS DISTINCT FROM 5 AND (physical_region.release_date IS NULL OR physical_region.release_date <= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP))", "($9 OR (physical_region.release_status IS DISTINCT FROM 5 AND (physical_region.release_date IS NULL OR physical_region.release_date <= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP))))");
+    let region_filter = format!("{} AND (NOT $3 OR (true {}))", build_region_filter("$1", "$10", "$9"), physical);
     let unknown_filter = if unknown {
         format!("AND {}", regional_unknown("$1", "$10"))
     } else {
