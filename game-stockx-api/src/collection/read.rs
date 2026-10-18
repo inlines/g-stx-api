@@ -1,6 +1,13 @@
 use super::models::*;
 use crate::DBPool;
-use crate::pagination::Pagination;
+// Collection reads allow all platforms; catalog pagination still requires cat.
+#[derive(serde::Deserialize)]
+struct Pagination {
+    limit: Option<i64>,
+    offset: Option<i64>,
+    #[serde(default)]
+    cat: i64,
+}
 use actix_web::web::Path;
 use actix_web::{HttpRequest, HttpResponse, web};
 use diesel::prelude::*;
@@ -131,7 +138,7 @@ async fn get_collection(
         INNER JOIN products AS prod ON r.product_id = prod.id
         LEFT JOIN covers AS cover ON cover.id = prod.cover_id
         LEFT JOIN regions as reg on reg.id = r.release_region
-        WHERE uhr.user_login = $1 AND p.id = $2
+        WHERE uhr.user_login = $1 AND ($2 = 0 OR p.id = $2)
         ORDER BY prod.name, r.id
         LIMIT $3 OFFSET $4
     "#;
@@ -152,7 +159,7 @@ async fn get_collection(
         SELECT COUNT(*) as total FROM public.users_have_releases AS uhr
         INNER JOIN catalog_visible_releases AS r ON uhr.release_id = r.id
         INNER JOIN platforms AS p ON r.platform = p.id
-        WHERE uhr.user_login = $1 AND p.id = $2
+        WHERE uhr.user_login = $1 AND ($2 = 0 OR p.id = $2)
     "#;
 
         let count_result = diesel::sql_query(count_query)
@@ -295,7 +302,7 @@ async fn get_wishlist(
         INNER JOIN products AS prod ON r.product_id = prod.id
         LEFT JOIN covers AS cover ON cover.id = prod.cover_id
         LEFT JOIN regions as reg on reg.id = r.release_region
-        WHERE uhw.user_login = $1 AND p.id = $2
+        WHERE uhw.user_login = $1 AND ($2 = 0 OR p.id = $2)
         ORDER BY prod.name, r.id
         LIMIT $3 OFFSET $4
     "#;
@@ -316,7 +323,7 @@ async fn get_wishlist(
         SELECT COUNT(*) as total FROM public.users_have_wishes AS uhw
         INNER JOIN catalog_visible_releases AS r ON uhw.release_id = r.id
         INNER JOIN platforms AS p ON r.platform = p.id
-        WHERE uhw.user_login = $1 AND p.id = $2
+        WHERE uhw.user_login = $1 AND ($2 = 0 OR p.id = $2)
     "#;
 
         let count_result = diesel::sql_query(count_query)
@@ -389,7 +396,7 @@ async fn get_wts(
         INNER JOIN products AS prod ON r.product_id = prod.id
         INNER JOIN covers AS cover ON cover.id = prod.cover_id
         INNER JOIN regions as reg on reg.id = r.release_region 
-        WHERE uhwts.user_login = $1 AND p.id = $2
+        WHERE uhwts.user_login = $1 AND ($2 = 0 OR p.id = $2)
         ORDER BY prod.name
         LIMIT $3 OFFSET $4
     "#;
@@ -407,7 +414,7 @@ async fn get_wts(
         INNER JOIN users_have_releases owned ON owned.release_id = uhwts.release_id AND owned.user_login = uhwts.user_login
         INNER JOIN catalog_visible_releases AS r ON uhwts.release_id = r.id
         INNER JOIN platforms AS p ON r.platform = p.id
-        WHERE uhwts.user_login = $1 AND p.id = $2
+        WHERE uhwts.user_login = $1 AND ($2 = 0 OR p.id = $2)
     "#;
 
     let count_result = diesel::sql_query(count_query)
@@ -437,5 +444,21 @@ async fn get_wts(
             eprintln!("Query error: {:?}", err);
             HttpResponse::InternalServerError().finish()
         }
+    }
+}
+
+#[cfg(test)]
+mod query_tests {
+    use super::Pagination;
+    #[actix_web::test]
+    async fn collection_query_without_platform_is_all_platforms() {
+        let query = actix_web::web::Query::<Pagination>::from_query(
+            "limit=1000&offset=0&include_unreleased=true&ignore_digital=false"
+        ).unwrap();
+        assert_eq!(query.cat, 0);
+        assert_eq!(query.limit, Some(1000));
+        let filtered = actix_web::web::Query::<Pagination>::from_query("cat=9").unwrap();
+        assert_eq!(filtered.cat, 9);
+        assert!(actix_web::web::Query::<Pagination>::from_query("cat=invalid").is_err());
     }
 }
