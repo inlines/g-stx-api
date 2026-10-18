@@ -64,6 +64,10 @@ pub struct ProductReleaseInfo {
 
     #[diesel(sql_type = Nullable<Array<Text>>)]
     pub serial: Option<Vec<String>>,
+
+    #[serde(default)]
+    #[diesel(sql_type = diesel::sql_types::Jsonb)]
+    pub serial_editions: serde_json::Value,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, QueryableByName)]
@@ -313,7 +317,10 @@ async fn get_product_releases(
                 ARRAY[]::text[]
             ) AS seller_logins,
             r.digital_only AS digital_only,
-            r.serial AS serial
+            r.serial AS serial,
+            COALESCE((SELECT jsonb_agg(jsonb_build_object('serial', e.serial, 'edition', e.edition)
+                ORDER BY e.serial, e.edition) FROM release_serial_editions e
+                WHERE e.release_id=r.id AND e.serial=ANY(r.serial)), '[]'::jsonb) AS serial_editions
         FROM catalog_visible_releases AS r
         LEFT JOIN platforms AS p ON r.platform = p.id
         INNER JOIN regions AS reg ON reg.id = r.release_region

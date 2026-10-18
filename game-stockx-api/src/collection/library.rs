@@ -90,7 +90,7 @@ WITH base AS MATERIALIZED (
  (r.digital_only OR EXISTS(SELECT 1 FROM product_platforms pp WHERE pp.product_id=r.product_id AND pp.platform_id=r.platform AND pp.digital_only)) digital_only,
  p.name product_name, p.cover_id, p.total_rating,
  plat.name platform_name, reg.name region_name,
- o.selected_serial, o.cib, CASE WHEN $9 THEN o.price END purchase_price, {price} price,
+ o.selected_serial, o.selected_edition, o.cib, CASE WHEN $9 THEN o.price END purchase_price, {price} price,
  CASE WHEN r.release_region=1 THEN 'europe' WHEN r.release_region=2 THEN 'america' WHEN r.release_region=5 THEN 'japan' ELSE 'other' END region_group
  FROM {source} JOIN catalog_visible_releases r ON r.id=l.release_id JOIN products p ON p.id=r.product_id
  JOIN platforms plat ON plat.id=r.platform LEFT JOIN regions reg ON reg.id=r.release_region

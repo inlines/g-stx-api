@@ -24,6 +24,10 @@ pub struct ProductListItem {
     #[diesel(sql_type = Array<Text>)]
     pub serial: Vec<String>,
 
+    #[serde(default)]
+    #[diesel(sql_type = diesel::sql_types::Jsonb)]
+    pub serial_editions: serde_json::Value,
+
     #[diesel(sql_type = Bool)]
     pub digital_only: bool,
 
@@ -316,6 +320,7 @@ pub async fn list(
         String::new()
     };
     let search_predicate = search_filter(serial_search, "$4", "$3", "$12");
+    let serial_editions = crate::catalog_serials::editions_sql("$4", "$12");
     let selected_serials = crate::catalog_serials::selected_sql("$4", "$12");
     let digital = "COALESCE((SELECT bool_and(r.digital_only IS TRUE) FROM catalog_visible_releases r WHERE r.product_id=p.id AND r.platform=$4 AND (cardinality($12::text[])=0 OR EXISTS(SELECT 1 FROM unnest($12::text[]) selected(region) WHERE (CASE r.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=selected.region OR (r.release_region=8 AND NOT EXISTS(SELECT 1 FROM catalog_visible_releases exact WHERE exact.product_id=p.id AND exact.platform=$4 AND (CASE exact.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=selected.region))))),false)";
     let has_serials = if unknown { "false".to_owned() } else { serials };
@@ -329,6 +334,7 @@ pub async fn list(
             {has_serials} AS has_serials,
             EXISTS(SELECT 1 FROM catalog_visible_releases available WHERE available.product_id=p.id AND available.platform=$4 AND available.release_status IS DISTINCT FROM 5 AND (available.release_date IS NULL OR available.release_date <= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)) AND (cardinality($12::text[])=0 OR available.release_region=8 OR (CASE available.release_region WHEN 1 THEN 'europe' WHEN 2 THEN 'america' WHEN 5 THEN 'japan' ELSE 'other' END)=ANY($12))) AS is_released,
             {selected_serials} AS serial,
+            {serial_editions} AS serial_editions,
             {digital} AS digital_only,
             p.first_release_date AS first_release_date,
             {selected_date} AS release_date,
