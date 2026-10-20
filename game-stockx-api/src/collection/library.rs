@@ -83,6 +83,8 @@ pub(crate) async fn get_library(
 WITH base AS MATERIALIZED (
  SELECT r.id release_id, r.product_id, r.platform platform_id, r.release_region region_id, r.release_date,
  COALESCE(r.serial,ARRAY[]::text[]) serial,
+ COALESCE((SELECT jsonb_agg(jsonb_build_object('serial',e.serial,'edition',e.edition) ORDER BY e.serial,e.edition)
+ FROM release_serial_editions e WHERE e.release_id=r.id AND e.serial=ANY(r.serial)), '[]'::jsonb) serial_editions,
  (r.release_status IS DISTINCT FROM 5 AND r.release_date <= EXTRACT(EPOCH FROM CURRENT_TIMESTAMP)
  AND (effective_game_type(p.id,r.platform,p.game_type) NOT IN (1,2,4,13,6,5,14)
  OR effective_game_type(p.id,r.platform,p.game_type) IS NULL
